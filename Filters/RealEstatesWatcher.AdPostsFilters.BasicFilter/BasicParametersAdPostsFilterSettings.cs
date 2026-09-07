@@ -22,8 +22,8 @@ public record BasicParametersAdPostsFilterSettings
     public decimal? MaxFloorArea { get; init; }
 
     [SettingsKey("city")]
-    public string? City { get; init; }
+    public string? City { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_CITY");
 
     [SettingsKey("street")]
-    public string? Street { get; init; }
+    public string? Street { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_STREET");
 }
