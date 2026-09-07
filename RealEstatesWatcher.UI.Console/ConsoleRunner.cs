@@ -10,6 +10,7 @@ using NLog.Extensions.Logging;
 using RealEstatesWatcher.AdPostsFilters.BasicFilter;
 using RealEstatesWatcher.AdPostsHandlers.Email;
 using RealEstatesWatcher.AdPostsHandlers.File;
+using RealEstatesWatcher.AdPostsHandlers.Telegram;
 using RealEstatesWatcher.AdsPortals.BazosCz;
 using RealEstatesWatcher.AdsPortals.BezrealitkyCz;
 using RealEstatesWatcher.AdsPortals.BidliCz;
@@ -312,6 +313,10 @@ public class ConsoleRunner
 
         watcher.RegisterAdPostsHandler(new EmailNotifyingAdPostsHandler(LoadEmailSettings(), spaceSeparatedNumberFormat, container.GetService<ILogger<EmailNotifyingAdPostsHandler>>()));
         watcher.RegisterAdPostsHandler(new LocalFileAdPostsHandler(LoadFileSettings(), spaceSeparatedNumberFormat));
+        watcher.RegisterAdPostsHandler(new TelegramAdPostsHandler(
+            Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN"),
+            Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID"),
+            spaceSeparatedNumberFormat));
 
         static EmailNotifyingAdPostsHandlerSettings LoadEmailSettings()
         {

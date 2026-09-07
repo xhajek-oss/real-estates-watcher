@@ -43,6 +43,7 @@
     <ProjectReference Include="..\Filters\RealEstatesWatcher.AdPostsFilters.BasicFilter\RealEstatesWatcher.AdPostsFilters.BasicFilter.csproj" />
     <ProjectReference Include="..\Handlers\RealEstatesWatcher.AdPostsHandlers.Email\RealEstatesWatcher.AdPostsHandlers.Email.csproj" />
     <ProjectReference Include="..\Handlers\RealEstatesWatcher.AdPostsHandlers.File\RealEstatesWatcher.AdPostsHandlers.File.csproj" />
+    <ProjectReference Include="..\Handlers\RealEstatesWatcher.AdPostsHandlers.Telegram\RealEstatesWatcher.AdPostsHandlers.Telegram.csproj" />
     <ProjectReference Include="..\Portals\RealEstatesWatcher.AdsPortals.BazosCz\RealEstatesWatcher.AdsPortals.BazosCz.csproj" />
     <ProjectReference Include="..\Portals\RealEstatesWatcher.AdsPortals.BidliCz\RealEstatesWatcher.AdsPortals.BidliCz.csproj" />
     <ProjectReference Include="..\Portals\RealEstatesWatcher.AdsPortals.BravisCz\RealEstatesWatcher.AdsPortals.BravisCz.csproj" />
