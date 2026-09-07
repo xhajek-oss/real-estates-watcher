@@ -1,0 +1,65 @@
+name: Daily Pardubice I Property Watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      REW_STATE_FILE_PATH: state/seen-posts.json
+      REW_FILTER_CITY: Pardubice I
+      REW_FILTER_STREET: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/scraper/package-lock.json
+
+      - name: Install scraper dependencies
+        working-directory: Tools/scraper
+        run: npm ci
+
+      - name: Restore seen-listings state
+        uses: actions/cache@v4
+        with:
+          path: state/seen-posts.json
+          key: real-estates-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            real-estates-state-${{ runner.os }}-
+
+      - name: Restore .NET dependencies
+        run: dotnet restore
+
+      - name: Run watcher once
+        shell: bash
+        run: |
+          printf 'exit\n' | dotnet run \
+            --project RealEstatesWatcher.UI.Console/RealEstatesWatcher.UI.Console.csproj \
+            --configuration Release \
+            --no-restore \
+            -- \
+            --p RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/portals.ini \
+            --h RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/handlers.ini \
+            --f RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/filters.ini \
+            --e RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/engine.ini \
+            --s RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/scraper.ini
