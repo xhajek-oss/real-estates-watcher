@@ -46,7 +46,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
         var message = $"🏠 Nový inzerát\n" +
                       $"{adPost.Title}\n" +
                       $"📍 {adPost.Address}\n" +
-                      $"💰 {adPost.Price.ToString(\"N0\", _numberFormat)} {adPost.Currency}\n" +
+                      $"💰 {adPost.Price.ToString("N0", _numberFormat)} {adPost.Currency}\n" +
                       $"🌐 {adPost.AdsPortalName}\n" +
                       $"{adPost.WebUrl}";
 
