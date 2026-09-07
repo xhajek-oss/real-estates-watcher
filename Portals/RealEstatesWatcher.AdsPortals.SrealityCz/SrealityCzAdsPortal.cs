@@ -60,9 +60,13 @@ public class SrealityCzAdsPortal(string watchedUrl,
             : node.SelectSingleNode(".//a[starts-with(@href,'/detail/')]");
         var path = linkNode?.GetAttributeValue("href", string.Empty) ?? string.Empty;
 
-        return Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
-            ? absoluteUri
-            : new Uri(new Uri(rootHost), path);
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
+            && (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
+        {
+            return absoluteUri;
+        }
+
+        return new Uri(new Uri(rootHost), path);
     }
 
     private static Uri? ParseImageUrl(HtmlNode node)
@@ -76,8 +80,11 @@ public class SrealityCzAdsPortal(string watchedUrl,
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
-        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri))
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
+            && (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
+        {
             return absoluteUri;
+        }
 
         return path.StartsWith("//", StringComparison.Ordinal)
             ? new Uri($"https:{path}")
