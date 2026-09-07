@@ -10,12 +10,14 @@ using RealEstatesWatcher.Models;
 namespace RealEstatesWatcher.AdsPortals.SrealityCz;
 
 public class SrealityCzAdsPortal(string watchedUrl,
-                                 IWebScraper webScraper, 
+                                 IWebScraper webScraper,
                                  ILogger<SrealityCzAdsPortal>? logger = null) : RealEstateAdsPortalBase(watchedUrl, webScraper, logger)
 {
     public override string Name => "Sreality.cz";
 
-    protected override string GetPathToAdsElements() => "//li[contains(@id,'estate-list-item')]";
+    // Sreality no longer exposes the old estate-list-item ids. Listing cards are
+    // represented by anchors leading to /detail/... and containing the card text.
+    protected override string GetPathToAdsElements() => "//a[starts-with(@href,'/detail/') and .//p]";
 
     protected override RealEstateAdPost ParseRealEstateAdPost(HtmlNode node) => new()
     {
@@ -32,48 +34,63 @@ public class SrealityCzAdsPortal(string watchedUrl,
         PriceComment = ParsePriceComment(node)
     };
 
-    private static string ParseTitle(HtmlNode node) => node.SelectNodes(".//p").Count < 1
-        ? string.Empty
-        : HttpUtility.HtmlDecode(node.SelectNodes(".//p")[0].InnerText.Trim());
+    private static IReadOnlyList<HtmlNode> GetDescriptionNodes(HtmlNode node) =>
+        node.SelectNodes(".//p")?.ToList() ?? [];
 
-    private static string ParseAddress(HtmlNode node) => node.SelectNodes(".//p").Count < 2 
+    private static string ParseTitle(HtmlNode node)
+    {
+        var descriptionNodes = GetDescriptionNodes(node);
+        return descriptionNodes.Count < 1
             ? string.Empty
-            : HttpUtility.HtmlDecode(node.SelectNodes(".//p")[1].InnerText.Trim());
+            : HttpUtility.HtmlDecode(descriptionNodes[0].InnerText.Trim());
+    }
+
+    private static string ParseAddress(HtmlNode node)
+    {
+        var descriptionNodes = GetDescriptionNodes(node);
+        return descriptionNodes.Count < 2
+            ? string.Empty
+            : HttpUtility.HtmlDecode(descriptionNodes[1].InnerText.Trim());
+    }
 
     private static Uri ParseWebUrl(HtmlNode node, string rootHost)
     {
-        var relativePath = node.FirstChild.GetAttributeValue("href", string.Empty);
+        var linkNode = node.Name.Equals("a", StringComparison.OrdinalIgnoreCase)
+            ? node
+            : node.SelectSingleNode(".//a[starts-with(@href,'/detail/')]");
+        var path = linkNode?.GetAttributeValue("href", string.Empty) ?? string.Empty;
 
-        return new Uri(rootHost + relativePath);
+        return Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
+            ? absoluteUri
+            : new Uri(new Uri(rootHost), path);
     }
 
     private static Uri? ParseImageUrl(HtmlNode node)
     {
-        var imageNodes = node.SelectSingleNode(".//ul/li")?.SelectNodes(".//img");
-
-        if (imageNodes is null)
+        var imageNodes = node.SelectNodes(".//img");
+        if (imageNodes is null || imageNodes.Count < 1)
             return null;
 
-        var path = imageNodes.Count switch
-        {
-            < 1 => null,
-            1 => imageNodes[0].GetAttributeValue<string?>("src", null),
-            2 or > 2 => imageNodes[1].GetAttributeValue<string?>("src", null),
-        };
+        var selectedImage = imageNodes.Count > 1 ? imageNodes[1] : imageNodes[0];
+        var path = selectedImage.GetAttributeValue<string?>("src", null);
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
 
-        return path is not null
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri))
+            return absoluteUri;
+
+        return path.StartsWith("//", StringComparison.Ordinal)
             ? new Uri($"https:{path}")
             : null;
     }
 
     private static decimal ParsePrice(HtmlNode node)
     {
-        var descriptionNodes = node.SelectNodes(".//p");
+        var descriptionNodes = GetDescriptionNodes(node);
         if (descriptionNodes.Count < 3)
             return decimal.Zero;
 
         var value = HttpUtility.HtmlDecode(descriptionNodes[2].InnerText);
-
         value = RegexMatchers.AllNonNumberValues().Replace(value, string.Empty);
 
         return decimal.TryParse(value, out var price)
@@ -86,9 +103,9 @@ public class SrealityCzAdsPortal(string watchedUrl,
         if (ParsePrice(node) is not decimal.Zero)
             return null;
 
-        var descriptionNodes = node.SelectNodes(".//p");
-        return descriptionNodes.Count < 3 
-            ? null 
+        var descriptionNodes = GetDescriptionNodes(node);
+        return descriptionNodes.Count < 3
+            ? null
             : HttpUtility.HtmlDecode(descriptionNodes[2].InnerText.Trim());
     }
 
@@ -96,7 +113,7 @@ public class SrealityCzAdsPortal(string watchedUrl,
     {
         var result = RegexMatchers.Layout().Match(ParseTitle(node));
 
-        return result.Success 
+        return result.Success
             ? LayoutExtensions.ToLayout(result.Groups[1].Value)
             : Layout.NotSpecified;
     }
@@ -115,7 +132,6 @@ public class SrealityCzAdsPortal(string watchedUrl,
             return decimal.Zero;
 
         var value = result.Groups.Skip<Group>(1).First(group => group.Success).Value;
-
 
         return decimal.TryParse(value, out var floorArea)
             ? floorArea
