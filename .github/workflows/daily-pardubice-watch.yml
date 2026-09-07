@@ -1,4 +1,4 @@
-name: Daily Pardubice Property Watch
+name: Daily Pardubice I Property Watch
 
 on:
   workflow_dispatch:
@@ -16,8 +16,8 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       REW_STATE_FILE_PATH: state/seen-posts.json
-      REW_FILTER_CITY: Pardubice
-      REW_FILTER_STREET: JUDr. Krpaty
+      REW_FILTER_CITY: Pardubice I
+      REW_FILTER_STREET: ''
 
     steps:
       - name: Checkout
