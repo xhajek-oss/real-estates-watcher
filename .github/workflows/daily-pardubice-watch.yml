@@ -15,7 +15,7 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      REW_STATE_FILE_PATH: state/seen-posts.json
+      REW_STATE_FILE_PATH: ${{ github.workspace }}/state/seen-posts.json
       REW_FILTER_CITY: Pardubice I
       REW_FILTER_STREET: ''
 
@@ -53,13 +53,14 @@ jobs:
       - name: Run watcher once
         shell: bash
         run: |
+          PRESET="$GITHUB_WORKSPACE/RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty"
           printf 'exit\n' | dotnet run \
-            --project RealEstatesWatcher.UI.Console/RealEstatesWatcher.UI.Console.csproj \
+            --project "$GITHUB_WORKSPACE/RealEstatesWatcher.UI.Console/RealEstatesWatcher.UI.Console.csproj" \
             --configuration Release \
             --no-restore \
             -- \
-            --p RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/portals.ini \
-            --h RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/handlers.ini \
-            --f RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/filters.ini \
-            --e RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/engine.ini \
-            --s RealEstatesWatcher.UI.Console/config-presets/pardubice-judr-krpaty/scraper.ini
+            --p "$PRESET/portals.ini" \
+            --h "$PRESET/handlers.ini" \
+            --f "$PRESET/filters.ini" \
+            --e "$PRESET/engine.ini" \
+            --s "$PRESET/scraper.ini"
