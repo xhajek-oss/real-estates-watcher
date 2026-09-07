@@ -94,8 +94,8 @@ public class PersistentStateTests
         Price = 1_000_000m,
         Address = "Test street",
         WebUrl = new Uri($"https://example.test/listing/{suffix}"),
-        Currency = Currency.Czk,
-        Layout = Layout.Unknown
+        Currency = Currency.CZK,
+        Layout = Layout.NotSpecified
     };
 
     private sealed class StubPortal(IList<RealEstateAdPost> posts) : IRealEstateAdsPortal
