@@ -20,4 +20,10 @@ public record BasicParametersAdPostsFilterSettings
 
     [SettingsKey("floor_area_max")]
     public decimal? MaxFloorArea { get; init; }
+
+    [SettingsKey("city")]
+    public string? City { get; init; }
+
+    [SettingsKey("street")]
+    public string? Street { get; init; }
 }
