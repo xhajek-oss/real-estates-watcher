@@ -22,10 +22,10 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
     {
     }
 
-    internal SrealityCzAdsPortal(string watchedUrl,
-                                 IWebScraper webScraper,
-                                 HttpClient httpClient,
-                                 ILogger<SrealityCzAdsPortal>? logger = null)
+    public SrealityCzAdsPortal(string watchedUrl,
+                               IWebScraper webScraper,
+                               HttpClient httpClient,
+                               ILogger<SrealityCzAdsPortal>? logger = null)
         : base(watchedUrl, webScraper, logger)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
