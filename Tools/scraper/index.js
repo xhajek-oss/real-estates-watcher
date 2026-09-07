@@ -17,9 +17,11 @@ function parseCookies(pathToCookiesFile) {
 
 (async function () {
     try {
+        const isCi = process.env.CI === 'true';
         const browser = await puppeteer.launch({
             ignoreDefaultArgs: ['--disable-extensions --user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'],
-            headless: false
+            headless: isCi,
+            args: isCi ? ['--no-sandbox', '--disable-setuid-sandbox'] : []
         });
     
         const page = await browser.newPage();

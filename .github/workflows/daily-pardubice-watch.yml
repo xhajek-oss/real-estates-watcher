@@ -16,8 +16,9 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       REW_STATE_FILE_PATH: ${{ github.workspace }}/state/seen-posts.json
-      REW_FILTER_CITY: Pardubice I
+      REW_FILTER_CITY: Pardubice
       REW_FILTER_STREET: ''
+      REW_FILTER_LOCATION_ANY: 'Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí'
 
     steps:
       - name: Checkout
