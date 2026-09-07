@@ -1,5 +1,6 @@
 const puppeteer = require("puppeteer");
 const fs = require('fs');
+const path = require('path');
 
 const defaultFileEncoding = "utf8";
 
@@ -13,6 +14,16 @@ function parseCookies(pathToCookiesFile) {
     } catch (err) {
         return undefined;
     }
+}
+
+function dumpHtmlIfRequested(html) {
+    const dumpPath = process.env.REW_SCRAPER_HTML_DUMP_PATH;
+    if (!dumpPath) {
+        return;
+    }
+
+    fs.mkdirSync(path.dirname(dumpPath), { recursive: true });
+    fs.writeFileSync(dumpPath, html, defaultFileEncoding);
 }
 
 (async function () {
@@ -45,7 +56,9 @@ function parseCookies(pathToCookiesFile) {
         // Give client-side rendered listing pages a short, bounded window to populate the DOM.
         await new Promise(resolve => setTimeout(resolve, renderDelayMs));
 
-        console.log(await page.content());
+        const html = await page.content();
+        dumpHtmlIfRequested(html);
+        console.log(html);
     } catch (err) {
         console.error(err);
         process.exitCode = 1;
