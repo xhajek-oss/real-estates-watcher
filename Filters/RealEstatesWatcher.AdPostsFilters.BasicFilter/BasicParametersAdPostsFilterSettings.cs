@@ -26,4 +26,7 @@ public record BasicParametersAdPostsFilterSettings
 
     [SettingsKey("street")]
     public string? Street { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_STREET");
+
+    [SettingsKey("location_any")]
+    public string? LocationAny { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_LOCATION_ANY");
 }
