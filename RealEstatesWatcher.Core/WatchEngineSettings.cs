@@ -17,4 +17,7 @@ public record WatchEngineSettings
 
     [SettingsKey("start_periodic_check_at")]
     public TimeOnly? StartCheckAtSpecificTime { get; init; }
+
+    [SettingsKey("state_file_path")]
+    public string? StateFilePath { get; init; } = "state/seen-posts.json";
 }
