@@ -1,5 +1,5 @@
-﻿using System.Text.RegularExpressions;
-using System.Web;
+﻿using System.Text.Json;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 
@@ -9,137 +9,165 @@ using RealEstatesWatcher.Models;
 
 namespace RealEstatesWatcher.AdsPortals.SrealityCz;
 
-public class SrealityCzAdsPortal(string watchedUrl,
-                                 IWebScraper webScraper,
-                                 ILogger<SrealityCzAdsPortal>? logger = null) : RealEstateAdsPortalBase(watchedUrl, webScraper, logger)
+public class SrealityCzAdsPortal : RealEstateAdsPortalBase
 {
+    private const string ApiBaseUrl = "https://www.sreality.cz/api/cs/v2/estates";
+    private const int PerPage = 100;
+    private readonly HttpClient _httpClient;
+
+    public SrealityCzAdsPortal(string watchedUrl,
+                               IWebScraper webScraper,
+                               ILogger<SrealityCzAdsPortal>? logger = null)
+        : this(watchedUrl, webScraper, new HttpClient(), logger)
+    {
+    }
+
+    internal SrealityCzAdsPortal(string watchedUrl,
+                                 IWebScraper webScraper,
+                                 HttpClient httpClient,
+                                 ILogger<SrealityCzAdsPortal>? logger = null)
+        : base(watchedUrl, webScraper, logger)
+    {
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+    }
+
     public override string Name => "Sreality.cz";
 
-    // Sreality no longer exposes the old estate-list-item ids. Listing cards are
-    // represented by anchors leading to /detail/... and containing the card text.
-    protected override string GetPathToAdsElements() => "//a[starts-with(@href,'/detail/') and .//p]";
-
-    protected override RealEstateAdPost ParseRealEstateAdPost(HtmlNode node) => new()
+    public override async Task<IList<RealEstateAdPost>> GetLatestRealEstateAdsAsync()
     {
-        AdsPortalName = Name,
-        Title = ParseTitle(node),
-        Address = ParseAddress(node),
-        Text = string.Empty,
-        Price = ParsePrice(node),
-        Currency = Currency.CZK,
-        Layout = ParseLayout(node),
-        WebUrl = ParseWebUrl(node, RootHost),
-        FloorArea = ParseFloorArea(node),
-        ImageUrl = ParseImageUrl(node),
-        PriceComment = ParsePriceComment(node)
-    };
-
-    private static IReadOnlyList<HtmlNode> GetDescriptionNodes(HtmlNode node) =>
-        node.SelectNodes(".//p")?.ToList() ?? [];
-
-    private static string ParseTitle(HtmlNode node)
-    {
-        var descriptionNodes = GetDescriptionNodes(node);
-        return descriptionNodes.Count < 1
-            ? string.Empty
-            : HttpUtility.HtmlDecode(descriptionNodes[0].InnerText.Trim());
-    }
-
-    private static string ParseAddress(HtmlNode node)
-    {
-        var descriptionNodes = GetDescriptionNodes(node);
-        return descriptionNodes.Count < 2
-            ? string.Empty
-            : HttpUtility.HtmlDecode(descriptionNodes[1].InnerText.Trim());
-    }
-
-    private static Uri ParseWebUrl(HtmlNode node, string rootHost)
-    {
-        var linkNode = node.Name.Equals("a", StringComparison.OrdinalIgnoreCase)
-            ? node
-            : node.SelectSingleNode(".//a[starts-with(@href,'/detail/')]");
-        var path = linkNode?.GetAttributeValue("href", string.Empty) ?? string.Empty;
-
-        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
-            && (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
+        try
         {
-            return absoluteUri;
+            var posts = new List<RealEstateAdPost>();
+
+            for (var page = 1; ; page++)
+            {
+                using var response = await _httpClient.GetAsync(BuildApiUrl(page)).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+
+                await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+
+                var estates = document.RootElement
+                    .GetProperty("_embedded")
+                    .GetProperty("estates");
+
+                foreach (var estate in estates.EnumerateArray())
+                    posts.Add(ParseEstate(estate));
+
+                if (estates.GetArrayLength() < PerPage)
+                    break;
+            }
+
+            Logger?.LogDebug("({Name}): Parsed {PostsCount} ads from Sreality JSON API.", Name, posts.Count);
+            return posts;
         }
-
-        return new Uri(new Uri(rootHost), path);
-    }
-
-    private static Uri? ParseImageUrl(HtmlNode node)
-    {
-        var imageNodes = node.SelectNodes(".//img");
-        if (imageNodes is null || imageNodes.Count < 1)
-            return null;
-
-        var selectedImage = imageNodes.Count > 1 ? imageNodes[1] : imageNodes[0];
-        var path = selectedImage.GetAttributeValue<string?>("src", null);
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        if (Uri.TryCreate(path, UriKind.Absolute, out var absoluteUri)
-            && (absoluteUri.Scheme == Uri.UriSchemeHttp || absoluteUri.Scheme == Uri.UriSchemeHttps))
+        catch (Exception ex)
         {
-            return absoluteUri;
+            throw new RealEstateAdsPortalException($"({Name}): Error getting latest ads from JSON API: {ex.Message}", ex);
         }
-
-        return path.StartsWith("//", StringComparison.Ordinal)
-            ? new Uri($"https:{path}")
-            : null;
     }
 
-    private static decimal ParsePrice(HtmlNode node)
+    protected override string GetPathToAdsElements() => string.Empty;
+
+    protected override RealEstateAdPost ParseRealEstateAdPost(HtmlNode node) => throw new NotSupportedException(
+        "Sreality uses its JSON API instead of HTML parsing.");
+
+    private string BuildApiUrl(int page)
     {
-        var descriptionNodes = GetDescriptionNodes(node);
-        if (descriptionNodes.Count < 3)
-            return decimal.Zero;
+        var query = new List<string>
+        {
+            "category_type_cb=1",
+            $"page={page}",
+            $"per_page={PerPage}"
+        };
 
-        var value = HttpUtility.HtmlDecode(descriptionNodes[2].InnerText);
-        value = RegexMatchers.AllNonNumberValues().Replace(value, string.Empty);
+        var watchedUri = new Uri(WatchedUrl);
+        var watchedQuery = System.Web.HttpUtility.ParseQueryString(watchedUri.Query);
+        var region = watchedQuery["region"];
 
-        return decimal.TryParse(value, out var price)
-            ? price
+        if (string.Equals(region, "pardubice", StringComparison.OrdinalIgnoreCase))
+            query.Add("locality_district_id=32");
+
+        return $"{ApiBaseUrl}?{string.Join("&", query)}";
+    }
+
+    private RealEstateAdPost ParseEstate(JsonElement estate)
+    {
+        var title = estate.TryGetProperty("name", out var nameNode)
+            ? nameNode.GetString() ?? string.Empty
+            : string.Empty;
+        var locality = estate.TryGetProperty("locality", out var localityNode)
+            ? localityNode.GetString() ?? string.Empty
+            : string.Empty;
+        var price = estate.TryGetProperty("price", out var priceNode) && priceNode.TryGetDecimal(out var parsedPrice)
+            ? parsedPrice
             : decimal.Zero;
+        var hashId = estate.TryGetProperty("hash_id", out var hashNode)
+            ? hashNode.ToString()
+            : string.Empty;
+
+        return new RealEstateAdPost
+        {
+            AdsPortalName = Name,
+            Title = title,
+            Address = locality,
+            Text = string.Empty,
+            Price = price,
+            Currency = Currency.CZK,
+            Layout = ParseLayout(title),
+            WebUrl = new Uri($"{ApiBaseUrl}/{hashId}"),
+            FloorArea = ParseFloorArea(title),
+            ImageUrl = ParseImageUrl(estate),
+            PriceComment = price == decimal.Zero ? "Cena na vyžádání" : null
+        };
     }
 
-    private static string? ParsePriceComment(HtmlNode node)
+    private static Uri? ParseImageUrl(JsonElement estate)
     {
-        if (ParsePrice(node) is not decimal.Zero)
+        if (!estate.TryGetProperty("_links", out var links) ||
+            !links.TryGetProperty("images", out var images) ||
+            images.ValueKind != JsonValueKind.Array)
             return null;
 
-        var descriptionNodes = GetDescriptionNodes(node);
-        return descriptionNodes.Count < 3
-            ? null
-            : HttpUtility.HtmlDecode(descriptionNodes[2].InnerText.Trim());
+        foreach (var image in images.EnumerateArray())
+        {
+            if (!image.TryGetProperty("href", out var hrefNode))
+                continue;
+
+            var href = hrefNode.GetString();
+            if (string.IsNullOrWhiteSpace(href))
+                continue;
+
+            if (Uri.TryCreate(href, UriKind.Absolute, out var absolute))
+                return absolute;
+
+            if (href.StartsWith("//", StringComparison.Ordinal))
+                return new Uri($"https:{href}");
+        }
+
+        return null;
     }
 
-    private static Layout ParseLayout(HtmlNode node)
+    private static Layout ParseLayout(string title)
     {
-        var result = RegexMatchers.Layout().Match(ParseTitle(node));
-
+        var result = RegexMatchers.Layout().Match(title);
         return result.Success
             ? LayoutExtensions.ToLayout(result.Groups[1].Value)
             : Layout.NotSpecified;
     }
 
-    private static decimal ParseFloorArea(HtmlNode node)
+    private static decimal ParseFloorArea(string title)
     {
-        var title = ParseTitle(node);
-
-        // workaround for the case like "Prodej bytu 4+1 111 m²" when it parses to "1111 m²"
-        var layout = RegexMatchers.Layout().Match(title);
+        var normalizedTitle = title;
+        var layout = RegexMatchers.Layout().Match(normalizedTitle);
         if (layout.Success)
-            title = title.Replace(layout.Groups[1].Value, string.Empty);
+            normalizedTitle = normalizedTitle.Replace(layout.Groups[1].Value, string.Empty);
 
-        var result = RegexMatchers.FloorArea().Match(title);
+        var result = RegexMatchers.FloorArea().Match(normalizedTitle);
         if (!result.Success)
             return decimal.Zero;
 
         var value = result.Groups.Skip<Group>(1).First(group => group.Success).Value;
-
         return decimal.TryParse(value, out var floorArea)
             ? floorArea
             : decimal.Zero;
