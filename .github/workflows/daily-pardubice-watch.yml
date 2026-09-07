@@ -19,7 +19,6 @@ jobs:
       REW_FILTER_CITY: Pardubice
       REW_FILTER_STREET: ''
       REW_FILTER_LOCATION_ANY: 'Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí'
-      REW_SCRAPER_HTML_DUMP_PATH: ${{ github.workspace }}/debug/sreality.html
 
     steps:
       - name: Checkout
@@ -66,12 +65,3 @@ jobs:
             --f "$PRESET/filters.ini" \
             --e "$PRESET/engine.ini" \
             --s "$PRESET/scraper.ini"
-
-      - name: Upload Sreality HTML debug artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sreality-html-${{ github.run_id }}
-          path: debug/sreality.html
-          if-no-files-found: warn
-          retention-days: 3
