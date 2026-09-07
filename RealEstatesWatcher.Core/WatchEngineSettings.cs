@@ -19,5 +19,5 @@ public record WatchEngineSettings
     public TimeOnly? StartCheckAtSpecificTime { get; init; }
 
     [SettingsKey("state_file_path")]
-    public string? StateFilePath { get; init; } = "state/seen-posts.json";
+    public string? StateFilePath { get; init; } = Environment.GetEnvironmentVariable("REW_STATE_FILE_PATH");
 }
