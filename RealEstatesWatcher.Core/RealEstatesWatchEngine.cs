@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using System.Timers;
 using Timer = System.Timers.Timer;
 
@@ -15,7 +16,7 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
     private readonly ISet<IRealEstateAdsPortal> _adsPortals = new HashSet<IRealEstateAdsPortal>();
     private readonly ISet<IRealEstateAdPostsHandler> _handlers = new HashSet<IRealEstateAdPostsHandler>();
     private readonly ISet<IRealEstateAdPostsFilter> _filters = new HashSet<IRealEstateAdPostsFilter>();
-    private readonly ISet<RealEstateAdPost> _posts = new HashSet<RealEstateAdPost>();
+    private readonly ISet<string> _seenPostKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private readonly WatchEngineSettings _settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
     private Timer? _timer;
@@ -32,7 +33,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             return;
         }
 
-        // add to watched portals
         _adsPortals.Add(adsPortal);
 
         logger?.LogInformation("Ads portal '{PortalName}' successfully registered.{NewLine}[URL = {PortalUrl}]", adsPortal.Name, Environment.NewLine, adsPortal.WatchedUrl);
@@ -48,7 +48,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             return;
         }
 
-        // add to registered handlers
         _handlers.Add(adPostsHandler);
 
         logger?.LogInformation("Ad posts handler of type '{HandlerName}' successfully registered.", adPostsHandler.GetType().FullName);
@@ -64,7 +63,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             return;
         }
 
-        // add to registered filters
         _filters.Add(adPostsFilter);
 
         logger?.LogInformation("Ad posts filter of type '{FilterName}' successfully registered.", adPostsFilter.GetType().FullName);
@@ -85,24 +83,24 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
 
         if (_settings.StartCheckAtSpecificTime is not null && !_settings.PerformCheckOnStartup)
         {
-            // just start timer with initial delay to the next specific time without performing initial check
             var checkInterval = CalculateIntervalForNextCheckTime(out var nextCheck);
 
             logger?.LogInformation(
                 "Real estates Watcher has been started without initial ads check with periodic " +
                 "checking interval of {CheckInterval} minute(s), next check at {NextCheckTime}.",
                 _settings.CheckIntervalMinutes, nextCheck);
-            
+
             StartTimer(checkInterval);
-            
+
             IsRunning = true;
-            
+
             return;
         }
 
         try
         {
-            // make initial load of posts
+            var persistentStateLoaded = LoadPersistentState();
+
             var posts = await GetCurrentAdsPortalsSnapshot().ConfigureAwait(false);
 
             if (posts.Count is 0)
@@ -114,7 +112,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                 logger?.LogDebug("Downloaded initial {PostsCount} post(s) from {PortalsCount} portal(s).", posts.Count, _adsPortals.Count);
             }
 
-            // run posts through filters
             posts = _filters.Aggregate(posts, (current, filter) => filter.Filter(current).ToList());
 
             if (posts.Count is 0)
@@ -126,25 +123,45 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                 logger?.LogDebug("Filtered {Count} post(s) from all downloaded posts.", posts.Count);
             }
 
-            // add to collection of processed posts
-            foreach (var post in posts)
+            if (persistentStateLoaded)
             {
-                _posts.Add(post);
-            }
+                var newPosts = posts.Where(TryMarkPostAsSeen).ToList();
 
-            if (posts.Count > 0)
-            {
-                // notify handlers
-                foreach (var handler in _handlers)
+                switch (newPosts.Count)
                 {
-                    if (!handler.IsEnabled)
-                        continue;
-
-                    await handler.HandleInitialRealEstateAdPostsAsync(posts).ConfigureAwait(false);
+                    case 1:
+                        await NotifyHandlers(newPosts[0]).ConfigureAwait(false);
+                        break;
+                    case > 1:
+                        await NotifyHandlers(newPosts).ConfigureAwait(false);
+                        break;
                 }
 
-                logger?.LogDebug("Handlers notified about initial posts.");
-            }            
+                if (newPosts.Count > 0)
+                    SavePersistentState();
+
+                logger?.LogInformation("Initial check against persistent state finished - found {Count} new ads.", newPosts.Count);
+            }
+            else
+            {
+                foreach (var post in posts)
+                    TryMarkPostAsSeen(post);
+
+                if (posts.Count > 0)
+                {
+                    foreach (var handler in _handlers)
+                    {
+                        if (!handler.IsEnabled)
+                            continue;
+
+                        await handler.HandleInitialRealEstateAdPostsAsync(posts).ConfigureAwait(false);
+                    }
+
+                    logger?.LogDebug("Handlers notified about initial posts.");
+                }
+
+                SavePersistentState();
+            }
         }
         catch (RealEstateAdsPortalException reapEx)
         {
@@ -185,7 +202,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         if (_timer is not null)
             StopAndDisposeTimer();
 
-        // start periodic checking timer
         _timer = new Timer
         {
             AutoReset = false,
@@ -227,7 +243,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             nextCheckTime = nextCheckTime.AddMinutes(_settings.CheckIntervalMinutes);
         }
 
-        // move back if the next check date is too far in the future (more than one interval away)
         while ((nextCheckTime - now).TotalMinutes > _settings.CheckIntervalMinutes)
         {
             nextCheckTime = nextCheckTime.AddMinutes(-_settings.CheckIntervalMinutes);
@@ -242,16 +257,12 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
 
         try
         {
-            // get posts snapshot from portals
             var allPosts = await GetCurrentAdsPortalsSnapshot().ConfigureAwait(false);
 
-            // run posts through filters
             allPosts = _filters.Aggregate(allPosts, (current, filter) => filter.Filter(current).ToList());
 
-            // add to collection of processed posts and filter out new ones
-            var newPosts = allPosts.Where(_posts.Add).ToList();
+            var newPosts = allPosts.Where(TryMarkPostAsSeen).ToList();
 
-            // notify
             switch (newPosts.Count)
             {
                 case 1:
@@ -261,6 +272,9 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                     await NotifyHandlers(newPosts).ConfigureAwait(false);
                     break;
             }
+
+            if (newPosts.Count > 0)
+                SavePersistentState();
 
             logger?.LogInformation("Periodic check finished - found {Count} new ads.", newPosts.Count);
         }
@@ -326,5 +340,65 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         }
 
         return posts;
+    }
+
+    private bool TryMarkPostAsSeen(RealEstateAdPost post) => _seenPostKeys.Add(GetPostKey(post));
+
+    private static string GetPostKey(RealEstateAdPost post) => post.WebUrl.GetLeftPart(UriPartial.Path);
+
+    private bool LoadPersistentState()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.StateFilePath))
+            return false;
+
+        var stateFilePath = Path.GetFullPath(_settings.StateFilePath);
+        if (!File.Exists(stateFilePath))
+            return false;
+
+        try
+        {
+            var json = File.ReadAllText(stateFilePath);
+            var seenPostKeys = JsonSerializer.Deserialize<string[]>(json) ?? [];
+
+            foreach (var key in seenPostKeys.Where(key => !string.IsNullOrWhiteSpace(key)))
+                _seenPostKeys.Add(key);
+
+            logger?.LogInformation("Loaded {Count} seen ad key(s) from persistent state '{StateFilePath}'.", _seenPostKeys.Count, stateFilePath);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            throw new RealEstatesWatchEngineException($"Unable to load persistent state from '{stateFilePath}': {ex.Message}", ex);
+        }
+    }
+
+    private void SavePersistentState()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.StateFilePath))
+            return;
+
+        var stateFilePath = Path.GetFullPath(_settings.StateFilePath);
+
+        try
+        {
+            var directory = Path.GetDirectoryName(stateFilePath);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            var json = JsonSerializer.Serialize(_seenPostKeys.OrderBy(key => key), new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            var temporaryFilePath = stateFilePath + ".tmp";
+            File.WriteAllText(temporaryFilePath, json);
+            File.Move(temporaryFilePath, stateFilePath, true);
+
+            logger?.LogDebug("Saved {Count} seen ad key(s) to persistent state '{StateFilePath}'.", _seenPostKeys.Count, stateFilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new RealEstatesWatchEngineException($"Unable to save persistent state to '{stateFilePath}': {ex.Message}", ex);
+        }
     }
 }
