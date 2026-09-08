@@ -8,46 +8,47 @@ namespace RealEstatesWatcher.Tests;
 public class SrealityCzAdsPortalTests : PortalParserTestBase
 {
     [Fact]
-    public async Task ParsesRepresentativeListingFromJsonApi()
+    public async Task ParsesRepresentativeListingFromV1JsonApi()
     {
         const string json = """
             {
-              "_embedded": {
-                "estates": [
-                  {
-                    "hash_id": 123,
-                    "name": "Prodej bytu 2+kk 55 m²",
-                    "locality": "Pardubice - Zelené Předměstí",
-                    "price": 5500000,
-                    "_links": {
-                      "images": [
-                        { "href": "https://img.example.test/one.jpg" }
-                      ]
-                    }
-                  }
-                ]
-              }
+              "pagination": { "total": 1, "limit": 1000, "offset": 0 },
+              "results": [
+                {
+                  "hash_id": 123,
+                  "advert_name": "Prodej bytu 2+kk 55 m²",
+                  "price_czk": 5500000,
+                  "category_type_cb": { "value": 1, "name": "Prodej" },
+                  "category_main_cb": { "value": 1, "name": "Byty" },
+                  "locality": {
+                    "city": "Pardubice",
+                    "citypart": "Zelené Předměstí",
+                    "street": "Palackého třída"
+                  },
+                  "advert_images": ["https://img.example.test/one.jpg"]
+                }
+              ]
             }
             """;
 
         var handler = new StubHttpMessageHandler(json);
-        var httpClient = new HttpClient(handler);
         var portal = new SrealityCzAdsPortal(
             "https://www.sreality.cz/hledani/prodej?region=pardubice",
             new StubWebScraper(string.Empty),
-            httpClient);
+            new HttpClient(handler));
 
         var post = Assert.Single(await portal.GetLatestRealEstateAdsAsync());
 
-        AssertPost(post, "Sreality.cz", "Prodej bytu 2+kk 55 m²", 5_500_000m, 55m, Layout.TwoPlusKk, "https://www.sreality.cz/api/cs/v2/estates/123");
-        Assert.Equal("Pardubice - Zelené Předměstí", post.Address);
+        AssertPost(post, "Sreality.cz", "Prodej bytu 2+kk 55 m²", 5_500_000m, 55m, Layout.TwoPlusKk, "https://www.sreality.cz/api/v1/estates/123");
+        Assert.Equal("Pardubice - Zelené Předměstí - Palackého třída", post.Address);
         Assert.Equal(new Uri("https://img.example.test/one.jpg"), post.ImageUrl);
-        Assert.Equal(3, handler.RequestedUris.Count);
+        Assert.Equal(5, handler.RequestedUris.Count);
         Assert.All(handler.RequestedUris, uri => Assert.Contains("category_type_cb=1", uri.Query));
-        Assert.All(handler.RequestedUris, uri => Assert.Contains("locality_district_id=32", uri.Query));
-        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=1"));
-        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=2"));
-        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=3"));
+        Assert.All(handler.RequestedUris, uri => Assert.Contains("locality_region_id=7", uri.Query));
+        Assert.All(handler.RequestedUris, uri => Assert.Contains("limit=1000", uri.Query));
+        Assert.All(handler.RequestedUris, uri => Assert.Contains("offset=0", uri.Query));
+        foreach (var category in Enumerable.Range(1, 5))
+            Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains($"category_main_cb={category}"));
     }
 
     [Fact]
@@ -55,15 +56,13 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
     {
         const string json = """
             {
-              "_embedded": {
-                "estates": [
-                  {
-                    "hash_id": 456,
-                    "name": "Ateliér",
-                    "locality": ""
-                  }
-                ]
-              }
+              "results": [
+                {
+                  "hash_id": 456,
+                  "advert_name": "Ateliér",
+                  "locality": {}
+                }
+              ]
             }
             """;
 
