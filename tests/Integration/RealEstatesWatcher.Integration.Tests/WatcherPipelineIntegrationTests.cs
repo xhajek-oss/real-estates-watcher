@@ -26,22 +26,26 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
     {
         const string json = """
             {
-              "_embedded": {
-                "estates": [
-                  {
-                    "hash_id": 101,
-                    "name": "Prodej bytu 2+kk 55 m²",
-                    "locality": "Praha 2",
-                    "price": 5500000
+              "results": [
+                {
+                  "hash_id": 101,
+                  "advert_name": "Prodej bytu 2+kk 55 m²",
+                  "locality": {
+                    "city": "Praha",
+                    "citypart": "Praha 2"
                   },
-                  {
-                    "hash_id": 202,
-                    "name": "Prodej bytu 4+1 120 m²",
-                    "locality": "Praha 1",
-                    "price": 12000000
-                  }
-                ]
-              }
+                  "price_czk": 5500000
+                },
+                {
+                  "hash_id": 202,
+                  "advert_name": "Prodej bytu 4+1 120 m²",
+                  "locality": {
+                    "city": "Praha",
+                    "citypart": "Praha 1"
+                  },
+                  "price_czk": 12000000
+                }
+              ]
             }
             """;
         var scraper = new StubWebScraper(string.Empty);
@@ -78,7 +82,7 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
         var output = await File.ReadAllTextAsync(outputPath);
         Assert.Equal(0, scraper.CallCount);
         Assert.Contains("Prodej bytu 2+kk 55 m²", output);
-        Assert.Contains("https://www.sreality.cz/api/cs/v2/estates/101", output);
+        Assert.Contains("https://www.sreality.cz/api/v1/estates/101", output);
         Assert.Contains("Sreality.cz", output);
         Assert.DoesNotContain("Prodej bytu 4+1 120 m²", output);
         Assert.DoesNotContain("/estates/202", output);
