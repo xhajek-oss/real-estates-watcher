@@ -1,3 +1,4 @@
+using RealEstatesWatcher.AdPostsFilters.Contracts;
 using RealEstatesWatcher.AdPostsHandlers.Contracts;
 using RealEstatesWatcher.AdsPortals.Contracts;
 using RealEstatesWatcher.Core;
@@ -16,7 +17,7 @@ public class PersistentStateTests
         try
         {
             var firstHandler = new RecordingHandler();
-            var firstEngine = CreateEngine(stateFilePath, [CreatePost("first")], firstHandler);
+            var firstEngine = CreateEngine(stateFilePath, [CreatePost("first")], firstHandler, "scope-a");
 
             await firstEngine.StartAsync();
             await firstEngine.StopAsync();
@@ -24,10 +25,12 @@ public class PersistentStateTests
             Assert.True(File.Exists(stateFilePath));
             Assert.Single(firstHandler.InitialBatches);
             Assert.Empty(firstHandler.NewPosts);
-            Assert.Contains("https://example.test/listing/first", await File.ReadAllTextAsync(stateFilePath));
+            var stateJson = await File.ReadAllTextAsync(stateFilePath);
+            Assert.Contains("ConfigurationFingerprint", stateJson);
+            Assert.Contains("https://example.test/listing/first", stateJson);
 
             var secondHandler = new RecordingHandler();
-            var secondEngine = CreateEngine(stateFilePath, [CreatePost("first"), CreatePost("second")], secondHandler);
+            var secondEngine = CreateEngine(stateFilePath, [CreatePost("first"), CreatePost("second")], secondHandler, "scope-a");
 
             await secondEngine.StartAsync();
             await secondEngine.StopAsync();
@@ -44,7 +47,41 @@ public class PersistentStateTests
     }
 
     [Fact]
-    public async Task ExistingState_UsesUrlPathAsStableListingKey()
+    public async Task ChangedFilterConfiguration_EstablishesNewBaselineWithoutNewPostNotifications()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"rew-state-{Guid.NewGuid():N}");
+        var stateFilePath = Path.Combine(tempDirectory, "seen-posts.json");
+
+        try
+        {
+            var firstHandler = new RecordingHandler();
+            var firstEngine = CreateEngine(stateFilePath, [CreatePost("first")], firstHandler, "pardubice-i");
+            await firstEngine.StartAsync();
+            await firstEngine.StopAsync();
+
+            var changedHandler = new RecordingHandler();
+            var changedEngine = CreateEngine(
+                stateFilePath,
+                [CreatePost("first"), CreatePost("second"), CreatePost("third")],
+                changedHandler,
+                "pardubice-ii");
+
+            await changedEngine.StartAsync();
+            await changedEngine.StopAsync();
+
+            Assert.Single(changedHandler.InitialBatches);
+            Assert.Equal(3, changedHandler.InitialBatches[0].Count);
+            Assert.Empty(changedHandler.NewPosts);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyArrayState_IsRebaselinedWithoutNotifications()
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), $"rew-state-{Guid.NewGuid():N}");
         var stateFilePath = Path.Combine(tempDirectory, "seen-posts.json");
@@ -54,13 +91,18 @@ public class PersistentStateTests
         try
         {
             var handler = new RecordingHandler();
-            var engine = CreateEngine(stateFilePath, [CreatePost("first?tracking=changed")], handler);
+            var engine = CreateEngine(
+                stateFilePath,
+                [CreatePost("first"), CreatePost("second")],
+                handler,
+                "scope-a");
 
             await engine.StartAsync();
             await engine.StopAsync();
 
-            Assert.Empty(handler.InitialBatches);
+            Assert.Single(handler.InitialBatches);
             Assert.Empty(handler.NewPosts);
+            Assert.Contains("ConfigurationFingerprint", await File.ReadAllTextAsync(stateFilePath));
         }
         finally
         {
@@ -72,7 +114,8 @@ public class PersistentStateTests
     private static RealEstatesWatchEngine CreateEngine(
         string stateFilePath,
         IList<RealEstateAdPost> posts,
-        RecordingHandler handler)
+        RecordingHandler handler,
+        string filterScope)
     {
         var engine = new RealEstatesWatchEngine(new WatchEngineSettings
         {
@@ -82,6 +125,7 @@ public class PersistentStateTests
         });
 
         engine.RegisterAdsPortal(new StubPortal(posts));
+        engine.RegisterAdPostsFilter(new ScopeFilter(filterScope));
         engine.RegisterAdPostsHandler(handler);
         return engine;
     }
@@ -102,8 +146,13 @@ public class PersistentStateTests
     {
         public string Name => "Test";
         public string WatchedUrl => "https://example.test";
-
         public Task<IList<RealEstateAdPost>> GetLatestRealEstateAdsAsync() => Task.FromResult(posts);
+    }
+
+    private sealed class ScopeFilter(string scope) : IRealEstateAdPostsFilter
+    {
+        public IEnumerable<RealEstateAdPost> Filter(IEnumerable<RealEstateAdPost> adPosts) => adPosts;
+        public override string ToString() => scope;
     }
 
     private sealed class RecordingHandler : IRealEstateAdPostsHandler

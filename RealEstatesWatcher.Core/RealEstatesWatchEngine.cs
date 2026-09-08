@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Timers;
 using Timer = System.Timers.Timer;
@@ -91,37 +93,26 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                 _settings.CheckIntervalMinutes, nextCheck);
 
             StartTimer(checkInterval);
-
             IsRunning = true;
-
             return;
         }
 
         try
         {
             var persistentStateLoaded = LoadPersistentState();
-
             var posts = await GetCurrentAdsPortalsSnapshot().ConfigureAwait(false);
 
             if (posts.Count is 0)
-            {
                 logger?.LogDebug("No initial posts downloaded.");
-            }
             else
-            {
                 logger?.LogDebug("Downloaded initial {PostsCount} post(s) from {PortalsCount} portal(s).", posts.Count, _adsPortals.Count);
-            }
 
             posts = _filters.Aggregate(posts, (current, filter) => filter.Filter(current).ToList());
 
             if (posts.Count is 0)
-            {
                 logger?.LogDebug("All downloaded posts have been filtered based on set filters.");
-            }
             else
-            {
                 logger?.LogDebug("Filtered {Count} post(s) from all downloaded posts.", posts.Count);
-            }
 
             if (persistentStateLoaded)
             {
@@ -161,6 +152,7 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                 }
 
                 SavePersistentState();
+                logger?.LogInformation("Established baseline for the current watch configuration with {Count} ads; no new-ad notifications were sent.", posts.Count);
             }
         }
         catch (RealEstateAdsPortalException reapEx)
@@ -173,7 +165,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         }
 
         StartTimer(CalculateIntervalForNextCheckTime(out var nextCheckTime));
-
         IsRunning = true;
 
         logger?.LogInformation(
@@ -188,7 +179,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             throw new RealEstatesWatchEngineException("Watcher is not running.");
 
         StopAndDisposeTimer();
-
         IsRunning = false;
 
         logger?.LogInformation("Real estates Watcher has been stopped.");
@@ -239,14 +229,10 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             DateTimeKind.Utc);
 
         while (nextCheckTime < now)
-        {
             nextCheckTime = nextCheckTime.AddMinutes(_settings.CheckIntervalMinutes);
-        }
 
         while ((nextCheckTime - now).TotalMinutes > _settings.CheckIntervalMinutes)
-        {
             nextCheckTime = nextCheckTime.AddMinutes(-_settings.CheckIntervalMinutes);
-        }
 
         return (nextCheckTime - now).TotalMilliseconds;
     }
@@ -258,9 +244,7 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         try
         {
             var allPosts = await GetCurrentAdsPortalsSnapshot().ConfigureAwait(false);
-
             allPosts = _filters.Aggregate(allPosts, (current, filter) => filter.Filter(current).ToList());
-
             var newPosts = allPosts.Where(TryMarkPostAsSeen).ToList();
 
             switch (newPosts.Count)
@@ -282,7 +266,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         {
             StopAndDisposeTimer();
             StartTimer(CalculateIntervalForNextCheckTime(out var nextCheckTime));
-
             logger?.LogDebug("Next periodic check is scheduled at {NextCheckTime}.", nextCheckTime);
         }
     }
@@ -358,9 +341,25 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         try
         {
             var json = File.ReadAllText(stateFilePath);
-            var seenPostKeys = JsonSerializer.Deserialize<string[]>(json) ?? [];
+            using var document = JsonDocument.Parse(json);
 
-            foreach (var key in seenPostKeys.Where(key => !string.IsNullOrWhiteSpace(key)))
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                logger?.LogInformation("Legacy persistent state detected at '{StateFilePath}'. Establishing a fresh baseline without notifications.", stateFilePath);
+                return false;
+            }
+
+            var state = JsonSerializer.Deserialize<PersistentState>(json)
+                ?? throw new JsonException("Persistent state is empty.");
+            var currentFingerprint = GetConfigurationFingerprint();
+
+            if (!string.Equals(state.ConfigurationFingerprint, currentFingerprint, StringComparison.Ordinal))
+            {
+                logger?.LogInformation("Watch configuration changed. Establishing a fresh baseline without notifications.");
+                return false;
+            }
+
+            foreach (var key in state.SeenPostKeys.Where(key => !string.IsNullOrWhiteSpace(key)))
                 _seenPostKeys.Add(key);
 
             logger?.LogInformation("Loaded {Count} seen ad key(s) from persistent state '{StateFilePath}'.", _seenPostKeys.Count, stateFilePath);
@@ -385,10 +384,10 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             if (!string.IsNullOrEmpty(directory))
                 Directory.CreateDirectory(directory);
 
-            var json = JsonSerializer.Serialize(_seenPostKeys.OrderBy(key => key), new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
+            var state = new PersistentState(
+                GetConfigurationFingerprint(),
+                _seenPostKeys.OrderBy(key => key).ToArray());
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
 
             var temporaryFilePath = stateFilePath + ".tmp";
             File.WriteAllText(temporaryFilePath, json);
@@ -398,7 +397,23 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new RealEstatesWatchEngineException($"Unable to save persistent state to '{stateFilePath}': {ex.Message}", ex);
+            throw new RealEstatesWatchEngineException($"Unable to save persistent state from '{stateFilePath}': {ex.Message}", ex);
         }
     }
+
+    private string GetConfigurationFingerprint()
+    {
+        var components = _adsPortals
+            .OrderBy(portal => portal.Name, StringComparer.Ordinal)
+            .ThenBy(portal => portal.WatchedUrl, StringComparer.Ordinal)
+            .Select(portal => $"portal:{portal.Name}|{portal.WatchedUrl}")
+            .Concat(_filters
+                .OrderBy(filter => filter.GetType().FullName, StringComparer.Ordinal)
+                .Select(filter => $"filter:{filter.GetType().FullName}|{filter}"));
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', components)));
+        return Convert.ToHexString(bytes);
+    }
+
+    private sealed record PersistentState(string ConfigurationFingerprint, string[] SeenPostKeys);
 }
