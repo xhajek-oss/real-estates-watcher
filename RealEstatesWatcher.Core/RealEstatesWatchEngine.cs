@@ -15,6 +15,8 @@ namespace RealEstatesWatcher.Core;
 public class RealEstatesWatchEngine(WatchEngineSettings settings,
                                     ILogger<RealEstatesWatchEngine>? logger = null)
 {
+    private const int StateIdentityVersion = 2;
+
     private readonly ISet<IRealEstateAdsPortal> _adsPortals = new HashSet<IRealEstateAdsPortal>();
     private readonly ISet<IRealEstateAdPostsHandler> _handlers = new HashSet<IRealEstateAdPostsHandler>();
     private readonly ISet<IRealEstateAdPostsFilter> _filters = new HashSet<IRealEstateAdPostsFilter>();
@@ -169,7 +171,7 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
 
         logger?.LogInformation(
             "Real estates Watcher has been started with initial ads check and periodic checking interval of " +
-            "{CheckInterval} minute(s), next check scheduled at {NextCheckTime}.",
+            "checking interval of {CheckInterval} minute(s), next check scheduled at {NextCheckTime}.",
             _settings.CheckIntervalMinutes, nextCheckTime);
     }
 
@@ -327,7 +329,17 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
 
     private bool TryMarkPostAsSeen(RealEstateAdPost post) => _seenPostKeys.Add(GetPostKey(post));
 
-    private static string GetPostKey(RealEstateAdPost post) => post.WebUrl.GetLeftPart(UriPartial.Path);
+    private static string GetPostKey(RealEstateAdPost post)
+    {
+        if (string.Equals(post.AdsPortalName, "Sreality.cz", StringComparison.OrdinalIgnoreCase))
+        {
+            var hashId = post.WebUrl.Segments.LastOrDefault()?.Trim('/');
+            if (!string.IsNullOrWhiteSpace(hashId))
+                return $"sreality:{hashId}";
+        }
+
+        return post.WebUrl.GetLeftPart(UriPartial.Path);
+    }
 
     private bool LoadPersistentState()
     {
@@ -409,7 +421,8 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             .Select(portal => $"portal:{portal.Name}|{portal.WatchedUrl}")
             .Concat(_filters
                 .OrderBy(filter => filter.GetType().FullName, StringComparer.Ordinal)
-                .Select(filter => $"filter:{filter.GetType().FullName}|{filter}"));
+                .Select(filter => $"filter:{filter.GetType().FullName}|{filter}"))
+            .Prepend($"state-identity-version:{StateIdentityVersion}");
 
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', components)));
         return Convert.ToHexString(bytes);
