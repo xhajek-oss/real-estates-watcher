@@ -59,6 +59,20 @@ public class BasicParametersAdPostsFilter(BasicParametersAdPostsFilterSettings s
         });
     }
 
+    public override string ToString()
+    {
+        var layouts = string.Join(',', _settings.Layouts.OrderBy(layout => layout));
+        return string.Join('|',
+            _settings.MinPrice?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            _settings.MaxPrice?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            layouts,
+            _settings.MinFloorArea?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            _settings.MaxFloorArea?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeLocation(_settings.City ?? string.Empty),
+            NormalizeLocation(_settings.Street ?? string.Empty),
+            NormalizeLocation(_settings.LocationAny ?? string.Empty));
+    }
+
     private static string NormalizeLocation(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormD);
