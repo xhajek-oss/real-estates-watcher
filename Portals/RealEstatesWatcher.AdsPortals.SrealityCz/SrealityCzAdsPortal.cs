@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
@@ -14,6 +14,7 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
 {
     private const string ApiBaseUrl = "https://www.sreality.cz/api/cs/v2/estates";
     private const int PerPage = 100;
+    private const int MaxErrorBodyLength = 4000;
     private static readonly int[] SaleCategoryMainIds = [1, 2, 3];
     private readonly HttpClient _httpClient;
 
@@ -45,7 +46,24 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
             {
                 for (var page = 1; ; page++)
                 {
-                    using var response = await _httpClient.GetAsync(BuildApiUrl(categoryMainId, page)).ConfigureAwait(false);
+                    var requestUrl = BuildApiUrl(categoryMainId, page);
+                    using var response = await _httpClient.GetAsync(requestUrl).ConfigureAwait(false);
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (responseBody.Length > MaxErrorBodyLength)
+                            responseBody = responseBody[..MaxErrorBodyLength] + "... [truncated]";
+
+                        Logger?.LogError(
+                            "({Name}): Sreality API request failed. URL={RequestUrl}, Status={StatusCode} ({ReasonPhrase}), Body={ResponseBody}",
+                            Name,
+                            requestUrl,
+                            (int)response.StatusCode,
+                            response.ReasonPhrase,
+                            responseBody);
+                    }
+
                     response.EnsureSuccessStatusCode();
 
                     await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
