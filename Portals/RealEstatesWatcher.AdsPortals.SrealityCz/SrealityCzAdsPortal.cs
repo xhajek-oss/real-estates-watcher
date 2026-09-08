@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
@@ -98,11 +100,112 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
             Price = price,
             Currency = Currency.CZK,
             Layout = ParseLayout(title),
-            WebUrl = new Uri($"https://www.sreality.cz/api/v1/estates/{hashId}"),
+            WebUrl = BuildPublicDetailUrl(estate, hashId),
             FloorArea = ParseFloorArea(title),
             ImageUrl = ParseImageUrl(estate),
             PriceComment = price == decimal.Zero ? "Cena na vyžádání" : null
         };
+    }
+
+    private static Uri BuildPublicDetailUrl(JsonElement estate, string hashId)
+    {
+        var type = GetCategorySeoName(estate, "category_type_cb", "prodej");
+        var main = GetMainCategorySeoName(estate);
+        var sub = GetCategorySeoName(estate, "category_sub_cb", "ostatni");
+        var locality = GetLocalitySeoName(estate);
+
+        return new Uri($"https://www.sreality.cz/detail/{type}/{main}/{sub}/{locality}/{hashId}");
+    }
+
+    private static string GetMainCategorySeoName(JsonElement estate)
+    {
+        if (estate.TryGetProperty("category_main_cb", out var category) && category.ValueKind == JsonValueKind.Object)
+        {
+            if (category.TryGetProperty("seo_name", out var seoName) && seoName.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(seoName.GetString()))
+                return seoName.GetString()!;
+
+            if (category.TryGetProperty("value", out var value) && value.TryGetInt32(out var categoryId))
+            {
+                return categoryId switch
+                {
+                    1 => "byt",
+                    2 => "dum",
+                    3 => "pozemek",
+                    4 => "komercni",
+                    5 => "ostatni",
+                    _ => Slugify(GetString(category, "name"))
+                };
+            }
+
+            var name = Slugify(GetString(category, "name"));
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+        }
+
+        return "ostatni";
+    }
+
+    private static string GetCategorySeoName(JsonElement estate, string propertyName, string fallback)
+    {
+        if (!estate.TryGetProperty(propertyName, out var category) || category.ValueKind != JsonValueKind.Object)
+            return fallback;
+
+        var seoName = GetString(category, "seo_name");
+        if (!string.IsNullOrWhiteSpace(seoName))
+            return seoName;
+
+        var name = Slugify(GetString(category, "name"));
+        return string.IsNullOrWhiteSpace(name) ? fallback : name;
+    }
+
+    private static string GetLocalitySeoName(JsonElement estate)
+    {
+        if (!estate.TryGetProperty("locality", out var locality) || locality.ValueKind != JsonValueKind.Object)
+            return "ceska-republika";
+
+        var city = FirstNonEmpty(GetString(locality, "city_seo_name"), Slugify(GetString(locality, "city")));
+        var cityPart = FirstNonEmpty(GetString(locality, "citypart_seo_name"), Slugify(GetString(locality, "citypart")));
+        var street = FirstNonEmpty(GetString(locality, "street_seo_name"), Slugify(GetString(locality, "street")));
+
+        var parts = new[] { city, cityPart, street }
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return parts.Length == 0 ? "ceska-republika" : string.Join("-", parts);
+    }
+
+    private static string FirstNonEmpty(string preferred, string fallback) =>
+        string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
+
+    private static string Slugify(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        var previousWasSeparator = false;
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            var lower = char.ToLowerInvariant(character);
+            if (char.IsLetterOrDigit(lower) || lower == '+')
+            {
+                builder.Append(lower);
+                previousWasSeparator = false;
+            }
+            else if (!previousWasSeparator && builder.Length > 0)
+            {
+                builder.Append('-');
+                previousWasSeparator = true;
+            }
+        }
+
+        return builder.ToString().Trim('-');
     }
 
     private static string ParseAddress(JsonElement estate)
