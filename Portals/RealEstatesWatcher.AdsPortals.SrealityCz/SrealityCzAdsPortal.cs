@@ -14,6 +14,7 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
 {
     private const string ApiBaseUrl = "https://www.sreality.cz/api/cs/v2/estates";
     private const int PerPage = 100;
+    private static readonly int[] SaleCategoryMainIds = [1, 2, 3];
     private readonly HttpClient _httpClient;
 
     public SrealityCzAdsPortal(string watchedUrl,
@@ -38,28 +39,35 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
     {
         try
         {
-            var posts = new List<RealEstateAdPost>();
+            var postsByUrl = new Dictionary<string, RealEstateAdPost>(StringComparer.OrdinalIgnoreCase);
 
-            for (var page = 1; ; page++)
+            foreach (var categoryMainId in SaleCategoryMainIds)
             {
-                using var response = await _httpClient.GetAsync(BuildApiUrl(page)).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
+                for (var page = 1; ; page++)
+                {
+                    using var response = await _httpClient.GetAsync(BuildApiUrl(categoryMainId, page)).ConfigureAwait(false);
+                    response.EnsureSuccessStatusCode();
 
-                await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+                    await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                    using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
 
-                var estates = document.RootElement
-                    .GetProperty("_embedded")
-                    .GetProperty("estates");
+                    var estates = document.RootElement
+                        .GetProperty("_embedded")
+                        .GetProperty("estates");
 
-                foreach (var estate in estates.EnumerateArray())
-                    posts.Add(ParseEstate(estate));
+                    foreach (var estate in estates.EnumerateArray())
+                    {
+                        var post = ParseEstate(estate);
+                        postsByUrl[post.WebUrl.GetLeftPart(UriPartial.Path)] = post;
+                    }
 
-                if (estates.GetArrayLength() < PerPage)
-                    break;
+                    if (estates.GetArrayLength() < PerPage)
+                        break;
+                }
             }
 
-            Logger?.LogDebug("({Name}): Parsed {PostsCount} ads from Sreality JSON API.", Name, posts.Count);
+            var posts = postsByUrl.Values.ToList();
+            Logger?.LogDebug("({Name}): Parsed {PostsCount} unique ads from Sreality JSON API.", Name, posts.Count);
             return posts;
         }
         catch (Exception ex)
@@ -73,11 +81,12 @@ public class SrealityCzAdsPortal : RealEstateAdsPortalBase
     protected override RealEstateAdPost ParseRealEstateAdPost(HtmlNode node) => throw new NotSupportedException(
         "Sreality uses its JSON API instead of HTML parsing.");
 
-    private string BuildApiUrl(int page)
+    private string BuildApiUrl(int categoryMainId, int page)
     {
         var query = new List<string>
         {
             "category_type_cb=1",
+            $"category_main_cb={categoryMainId}",
             $"page={page}",
             $"per_page={PerPage}"
         };
