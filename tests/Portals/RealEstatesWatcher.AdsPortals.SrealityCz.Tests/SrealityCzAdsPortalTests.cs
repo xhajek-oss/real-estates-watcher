@@ -42,8 +42,12 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
         AssertPost(post, "Sreality.cz", "Prodej bytu 2+kk 55 m²", 5_500_000m, 55m, Layout.TwoPlusKk, "https://www.sreality.cz/api/cs/v2/estates/123");
         Assert.Equal("Pardubice - Zelené Předměstí", post.Address);
         Assert.Equal(new Uri("https://img.example.test/one.jpg"), post.ImageUrl);
-        Assert.Contains("category_type_cb=1", handler.RequestedUri!.Query);
-        Assert.Contains("locality_district_id=32", handler.RequestedUri.Query);
+        Assert.Equal(3, handler.RequestedUris.Count);
+        Assert.All(handler.RequestedUris, uri => Assert.Contains("category_type_cb=1", uri.Query));
+        Assert.All(handler.RequestedUris, uri => Assert.Contains("locality_district_id=32", uri.Query));
+        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=1"));
+        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=2"));
+        Assert.Contains(handler.RequestedUris, uri => uri.Query.Contains("category_main_cb=3"));
     }
 
     [Fact]
@@ -81,11 +85,11 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
 
     private sealed class StubHttpMessageHandler(string responseJson) : HttpMessageHandler
     {
-        public Uri? RequestedUri { get; private set; }
+        public List<Uri> RequestedUris { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            RequestedUri = request.RequestUri;
+            RequestedUris.Add(request.RequestUri!);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
