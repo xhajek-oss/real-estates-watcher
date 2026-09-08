@@ -18,12 +18,16 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
                   "hash_id": 123,
                   "advert_name": "Prodej bytu 2+kk 55 m²",
                   "price_czk": 5500000,
-                  "category_type_cb": { "value": 1, "name": "Prodej" },
+                  "category_type_cb": { "value": 1, "name": "Prodej", "seo_name": "prodej" },
                   "category_main_cb": { "value": 1, "name": "Byty" },
+                  "category_sub_cb": { "value": 47, "name": "2+kk" },
                   "locality": {
                     "city": "Pardubice",
                     "citypart": "Zelené Předměstí",
-                    "street": "Palackého třída"
+                    "street": "Palackého třída",
+                    "city_seo_name": "pardubice",
+                    "citypart_seo_name": "zelene-predmesti",
+                    "street_seo_name": "palackeho-trida"
                   },
                   "advert_images": ["https://img.example.test/one.jpg"]
                 }
@@ -39,7 +43,7 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
 
         var post = Assert.Single(await portal.GetLatestRealEstateAdsAsync());
 
-        AssertPost(post, "Sreality.cz", "Prodej bytu 2+kk 55 m²", 5_500_000m, 55m, Layout.TwoPlusKk, "https://www.sreality.cz/api/v1/estates/123");
+        AssertPost(post, "Sreality.cz", "Prodej bytu 2+kk 55 m²", 5_500_000m, 55m, Layout.TwoPlusKk, "https://www.sreality.cz/detail/prodej/byt/2+kk/pardubice-zelene-predmesti-palackeho-trida/123");
         Assert.Equal("Pardubice - Zelené Předměstí - Palackého třída", post.Address);
         Assert.Equal(new Uri("https://img.example.test/one.jpg"), post.ImageUrl);
         Assert.Equal(5, handler.RequestedUris.Count);
@@ -52,13 +56,45 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
     }
 
     [Fact]
-    public async Task SparseListingUsesFallbackValues()
+    public async Task PublicUrlFallsBackToNamesWhenSeoFieldsAreMissing()
     {
         const string json = """
             {
               "results": [
                 {
                   "hash_id": 456,
+                  "advert_name": "Prodej rodinného domu 120 m²",
+                  "price_czk": 7000000,
+                  "category_type_cb": { "value": 1, "name": "Prodej" },
+                  "category_main_cb": { "value": 2, "name": "Domy" },
+                  "category_sub_cb": { "value": 37, "name": "Rodinný" },
+                  "locality": {
+                    "city": "Pardubice",
+                    "citypart": "Bílé Předměstí"
+                  }
+                }
+              ]
+            }
+            """;
+
+        var portal = new SrealityCzAdsPortal(
+            "https://www.sreality.cz/hledani/prodej?region=pardubice",
+            new StubWebScraper(string.Empty),
+            new HttpClient(new StubHttpMessageHandler(json)));
+
+        var post = Assert.Single(await portal.GetLatestRealEstateAdsAsync());
+
+        Assert.Equal(new Uri("https://www.sreality.cz/detail/prodej/dum/rodinny/pardubice-bile-predmesti/456"), post.WebUrl);
+    }
+
+    [Fact]
+    public async Task SparseListingUsesFallbackValues()
+    {
+        const string json = """
+            {
+              "results": [
+                {
+                  "hash_id": 789,
                   "advert_name": "Ateliér",
                   "locality": {}
                 }
@@ -80,6 +116,7 @@ public class SrealityCzAdsPortalTests : PortalParserTestBase
         Assert.Equal(Layout.NotSpecified, post.Layout);
         Assert.Equal("Cena na vyžádání", post.PriceComment);
         Assert.Null(post.ImageUrl);
+        Assert.Equal(new Uri("https://www.sreality.cz/detail/prodej/ostatni/ostatni/ceska-republika/789"), post.WebUrl);
     }
 
     private sealed class StubHttpMessageHandler(string responseJson) : HttpMessageHandler

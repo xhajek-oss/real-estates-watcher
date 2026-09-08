@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using RealEstatesWatcher.AdPostsHandlers.Contracts;
 using RealEstatesWatcher.Models;
 
@@ -7,6 +9,7 @@ namespace RealEstatesWatcher.AdPostsHandlers.Telegram;
 
 public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
 {
+    private const int MaxRateLimitRetries = 3;
     private readonly string? _botToken;
     private readonly string? _chatId;
     private readonly NumberFormatInfo _numberFormat;
@@ -60,13 +63,23 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
 
         try
         {
-            using var response = await _httpClient.PostAsJsonAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
-            if (response.IsSuccessStatusCode)
-                return;
+            for (var attempt = 0; ; attempt++)
+            {
+                using var response = await _httpClient.PostAsJsonAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                    return;
 
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            throw new RealEstateAdPostsHandlerException(
-                $"Telegram API returned {(int)response.StatusCode} ({response.ReasonPhrase}): {body}");
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt < MaxRateLimitRetries)
+                {
+                    var retryAfterSeconds = ParseRetryAfterSeconds(body);
+                    await Task.Delay(TimeSpan.FromSeconds(retryAfterSeconds), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                throw new RealEstateAdPostsHandlerException(
+                    $"Telegram API returned {(int)response.StatusCode} ({response.ReasonPhrase}): {body}");
+            }
         }
         catch (RealEstateAdPostsHandlerException)
         {
@@ -76,5 +89,24 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
         {
             throw new RealEstateAdPostsHandlerException("Unable to send Telegram notification.", ex);
         }
+    }
+
+    private static int ParseRetryAfterSeconds(string responseBody)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.TryGetProperty("parameters", out var parameters) &&
+                parameters.TryGetProperty("retry_after", out var retryAfter) &&
+                retryAfter.TryGetInt32(out var seconds))
+            {
+                return Math.Clamp(seconds + 1, 1, 120);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return 5;
     }
 }

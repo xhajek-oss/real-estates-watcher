@@ -30,18 +30,28 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
                 {
                   "hash_id": 101,
                   "advert_name": "Prodej bytu 2+kk 55 m²",
+                  "category_type_cb": { "value": 1, "name": "Prodej" },
+                  "category_main_cb": { "value": 1, "name": "Byty" },
+                  "category_sub_cb": { "value": 47, "name": "2+kk" },
                   "locality": {
                     "city": "Praha",
-                    "citypart": "Praha 2"
+                    "citypart": "Praha 2",
+                    "city_seo_name": "praha",
+                    "citypart_seo_name": "praha-2"
                   },
                   "price_czk": 5500000
                 },
                 {
                   "hash_id": 202,
                   "advert_name": "Prodej bytu 4+1 120 m²",
+                  "category_type_cb": { "value": 1, "name": "Prodej" },
+                  "category_main_cb": { "value": 1, "name": "Byty" },
+                  "category_sub_cb": { "value": 51, "name": "4+1" },
                   "locality": {
                     "city": "Praha",
-                    "citypart": "Praha 1"
+                    "citypart": "Praha 1",
+                    "city_seo_name": "praha",
+                    "citypart_seo_name": "praha-1"
                   },
                   "price_czk": 12000000
                 }
@@ -82,10 +92,10 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
         var output = await File.ReadAllTextAsync(outputPath);
         Assert.Equal(0, scraper.CallCount);
         Assert.Contains("Prodej bytu 2+kk 55 m²", output);
-        Assert.Contains("https://www.sreality.cz/api/v1/estates/101", output);
+        Assert.Contains("https://www.sreality.cz/detail/prodej/byt/2+kk/praha-praha-2/101", output);
         Assert.Contains("Sreality.cz", output);
         Assert.DoesNotContain("Prodej bytu 4+1 120 m²", output);
-        Assert.DoesNotContain("/estates/202", output);
+        Assert.DoesNotContain("/202", output);
     }
 
     public void Dispose()
