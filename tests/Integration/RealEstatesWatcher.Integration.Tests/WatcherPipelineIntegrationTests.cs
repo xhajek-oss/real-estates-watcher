@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using RealEstatesWatcher.AdPostsFilters.BasicFilter;
 using RealEstatesWatcher.AdPostsHandlers.File;
@@ -23,14 +24,31 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task StartupCheck_ParsesFiltersAndWritesListingsThroughRealPipeline()
     {
-        const string html = """
-            <html><body><ul>
-              <li id="estate-list-item-affordable"><a href="/detail/affordable"><ul><li><img src="//img.example.test/affordable.jpg"></li></ul><p>Prodej bytu 2+kk 55 m²</p><p>Praha 2</p><p>5 500 000 Kč</p></a></li>
-              <li id="estate-list-item-expensive"><a href="/detail/expensive"><ul><li><img src="//img.example.test/expensive.jpg"></li></ul><p>Prodej bytu 4+1 120 m²</p><p>Praha 1</p><p>12 000 000 Kč</p></a></li>
-            </ul></body></html>
+        const string json = """
+            {
+              "_embedded": {
+                "estates": [
+                  {
+                    "hash_id": 101,
+                    "name": "Prodej bytu 2+kk 55 m²",
+                    "locality": "Praha 2",
+                    "price": 5500000
+                  },
+                  {
+                    "hash_id": 202,
+                    "name": "Prodej bytu 4+1 120 m²",
+                    "locality": "Praha 1",
+                    "price": 12000000
+                  }
+                ]
+              }
+            }
             """;
-        var scraper = new StubWebScraper(html);
-        var portal = new SrealityCzAdsPortal("https://www.sreality.cz/hledani", scraper);
+        var scraper = new StubWebScraper(string.Empty);
+        var portal = new SrealityCzAdsPortal(
+            "https://www.sreality.cz/hledani/prodej",
+            scraper,
+            new HttpClient(new StubHttpMessageHandler(json)));
         var filter = new BasicParametersAdPostsFilter(new BasicParametersAdPostsFilterSettings
         {
             MaxPrice = 6_000_000m,
@@ -58,12 +76,12 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
         await engine.StopAsync();
 
         var output = await File.ReadAllTextAsync(outputPath);
-        Assert.Equal(1, scraper.CallCount);
+        Assert.Equal(0, scraper.CallCount);
         Assert.Contains("Prodej bytu 2+kk 55 m²", output);
-        Assert.Contains("https://www.sreality.cz/detail/affordable", output);
+        Assert.Contains("https://www.sreality.cz/api/cs/v2/estates/101", output);
         Assert.Contains("Sreality.cz", output);
         Assert.DoesNotContain("Prodej bytu 4+1 120 m²", output);
-        Assert.DoesNotContain("/detail/expensive", output);
+        Assert.DoesNotContain("/estates/202", output);
     }
 
     public void Dispose()
@@ -90,6 +108,15 @@ public sealed class WatcherPipelineIntegrationTests : IDisposable
             Encoding? pageEncoding = null,
             CancellationToken cancellationToken = default) =>
             GetFullWebPageContentAsync(uri.AbsoluteUri, pageEncoding, cancellationToken);
+    }
+
+    private sealed class StubHttpMessageHandler(string responseJson) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            });
     }
 }
 
