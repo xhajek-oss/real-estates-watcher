@@ -14,6 +14,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
     private readonly string? _chatId;
     private readonly NumberFormatInfo _numberFormat;
     private readonly HttpClient _httpClient;
+    private readonly CrossPortalPropertyStore _propertyStore;
 
     public TelegramAdPostsHandler(
         string? botToken,
@@ -25,6 +26,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         _chatId = chatId;
         _numberFormat = numberFormat ?? throw new ArgumentNullException(nameof(numberFormat));
         _httpClient = httpClient ?? new HttpClient();
+        _propertyStore = new CrossPortalPropertyStore(ResolvePropertyStatePath());
     }
 
     public bool IsEnabled => !string.IsNullOrWhiteSpace(_botToken) && !string.IsNullOrWhiteSpace(_chatId);
@@ -33,8 +35,33 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
 
     public async Task HandleNewRealEstateAdPostAsync(RealEstateAdPost adPost, CancellationToken cancellationToken = default)
     {
-        var property = CreateSingleSourceProperty(adPost);
-        await HandleNewRealEstatePropertyAsync(property, cancellationToken).ConfigureAwait(false);
+        if (!IsEnabled)
+            return;
+
+        var existing = _propertyStore.FindDuplicate(adPost);
+        if (existing is null)
+        {
+            var newProperty = _propertyStore.CreateNew(adPost, telegramMessageId: null);
+            var messageId = await HandleNewRealEstatePropertyAsync(
+                _propertyStore.ToNotification(newProperty), cancellationToken).ConfigureAwait(false);
+
+            _propertyStore.AddAndSave(newProperty with { TelegramMessageId = messageId });
+            return;
+        }
+
+        var updated = _propertyStore.WithAdditionalSource(existing, adPost);
+        if (updated.Sources.Length == existing.Sources.Length)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(existing.TelegramMessageId))
+        {
+            await UpdateRealEstatePropertyAsync(
+                _propertyStore.ToNotification(updated),
+                existing.TelegramMessageId,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        _propertyStore.ReplaceAndSave(existing, updated);
     }
 
     public async Task HandleNewRealEstatesAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default)
@@ -43,8 +70,13 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             await HandleNewRealEstateAdPostAsync(adPost, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task HandleInitialRealEstateAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+    public Task HandleInitialRealEstateAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default)
+    {
+        if (IsEnabled)
+            _propertyStore.EstablishBaseline(adPosts);
+
+        return Task.CompletedTask;
+    }
 
     public async Task<string?> HandleNewRealEstatePropertyAsync(
         RealEstatePropertyNotification property,
@@ -180,19 +212,20 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         }
     }
 
-    private static RealEstatePropertyNotification CreateSingleSourceProperty(RealEstateAdPost adPost)
+    private static string ResolvePropertyStatePath()
     {
-        var source = new RealEstatePropertySource(adPost.AdsPortalName, adPost.WebUrl);
-        return new RealEstatePropertyNotification(
-            adPost.WebUrl.GetLeftPart(UriPartial.Path),
-            adPost.Title,
-            adPost.Address,
-            adPost.Price,
-            adPost.Currency,
-            adPost.Layout,
-            adPost.FloorArea,
-            source,
-            new[] { source });
+        var configured = Environment.GetEnvironmentVariable("REW_PROPERTY_STATE_FILE_PATH");
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        var watcherState = Environment.GetEnvironmentVariable("REW_STATE_FILE_PATH");
+        if (!string.IsNullOrWhiteSpace(watcherState))
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(watcherState)) ?? Directory.GetCurrentDirectory();
+            return Path.Combine(directory, "property-groups.json");
+        }
+
+        return Path.Combine(Directory.GetCurrentDirectory(), "state", "property-groups.json");
     }
 
     private static int ParseRetryAfterSeconds(string responseBody)
