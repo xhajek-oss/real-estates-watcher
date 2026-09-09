@@ -16,6 +16,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       REW_STATE_FILE_PATH: ${{ github.workspace }}/state/seen-posts.json
+      REW_PROPERTY_STATE_FILE_PATH: ${{ github.workspace }}/state/property-groups.json
       REW_FILTER_CITY: Pardubice
       REW_FILTER_STREET: ''
       REW_FILTER_LOCATION_ANY: 'Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí'
@@ -40,13 +41,21 @@ jobs:
         working-directory: Tools/scraper
         run: npm ci
 
-      - name: Restore seen-listings state
+      - name: Restore watcher state
         uses: actions/cache@v4
         with:
-          path: state/seen-posts.json
+          path: state
           key: real-estates-state-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             real-estates-state-${{ runner.os }}-
+
+      - name: Initialize property dedup baseline when needed
+        shell: bash
+        run: |
+          if [ ! -f "$REW_PROPERTY_STATE_FILE_PATH" ]; then
+            echo "Property dedup state is missing; forcing a silent watcher baseline."
+            rm -f "$REW_STATE_FILE_PATH"
+          fi
 
       - name: Restore .NET dependencies
         run: dotnet restore
