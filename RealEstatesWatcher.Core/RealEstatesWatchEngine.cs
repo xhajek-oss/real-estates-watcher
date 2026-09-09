@@ -170,7 +170,7 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
         IsRunning = true;
 
         logger?.LogInformation(
-            "Real estates Watcher has been started with initial ads check and periodic checking interval of " +
+            "Real estates Watcher has been started with initial ads check and periodic " +
             "checking interval of {CheckInterval} minute(s), next check scheduled at {NextCheckTime}.",
             _settings.CheckIntervalMinutes, nextCheckTime);
     }
