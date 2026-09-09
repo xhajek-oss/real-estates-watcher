@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Handlers\RealEstatesWatcher.AdPostsHandlers.Telegram\RealEstatesWatcher.AdPostsHandlers.Telegram.csproj" />
+  </ItemGroup>
+</Project>

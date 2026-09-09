@@ -56,6 +56,7 @@
     <Project Path="tests/Handlers/RealEstatesWatcher.AdPostsHandlers.Base.Html.Tests/RealEstatesWatcher.AdPostsHandlers.Base.Html.Tests.csproj" />
     <Project Path="tests/Handlers/RealEstatesWatcher.AdPostsHandlers.Email.Tests/RealEstatesWatcher.AdPostsHandlers.Email.Tests.csproj" />
     <Project Path="tests/Handlers/RealEstatesWatcher.AdPostsHandlers.File.Tests/RealEstatesWatcher.AdPostsHandlers.File.Tests.csproj" />
+    <Project Path="tests/Handlers/RealEstatesWatcher.AdPostsHandlers.Telegram.Tests/RealEstatesWatcher.AdPostsHandlers.Telegram.Tests.csproj" />
   </Folder>
   <Folder Name="/Tests/Integration/">
     <Project Path="tests/Integration/RealEstatesWatcher.Integration.ProcessFixture/RealEstatesWatcher.Integration.ProcessFixture.csproj" />
