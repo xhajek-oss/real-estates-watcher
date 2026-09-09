@@ -7,7 +7,7 @@ using RealEstatesWatcher.Models;
 
 namespace RealEstatesWatcher.AdPostsHandlers.Telegram;
 
-public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
+public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatableRealEstatePropertyHandler
 {
     private const int MaxRateLimitRetries = 3;
     private readonly string? _botToken;
@@ -29,51 +29,140 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
 
     public bool IsEnabled => !string.IsNullOrWhiteSpace(_botToken) && !string.IsNullOrWhiteSpace(_chatId);
 
-    public Task HandleNewRealEstateAdPostAsync(RealEstateAdPost adPost, CancellationToken cancellationToken = default) =>
-        SendPostAsync(adPost, cancellationToken);
+    public string HandlerStateKey => "telegram";
+
+    public async Task HandleNewRealEstateAdPostAsync(RealEstateAdPost adPost, CancellationToken cancellationToken = default)
+    {
+        var property = CreateSingleSourceProperty(adPost);
+        await HandleNewRealEstatePropertyAsync(property, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task HandleNewRealEstatesAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default)
     {
         foreach (var adPost in adPosts)
-            await SendPostAsync(adPost, cancellationToken).ConfigureAwait(false);
+            await HandleNewRealEstateAdPostAsync(adPost, cancellationToken).ConfigureAwait(false);
     }
 
     public Task HandleInitialRealEstateAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
-    private async Task SendPostAsync(RealEstateAdPost adPost, CancellationToken cancellationToken)
+    public async Task<string?> HandleNewRealEstatePropertyAsync(
+        RealEstatePropertyNotification property,
+        CancellationToken cancellationToken = default)
     {
         if (!IsEnabled)
-            return;
-
-        var message = $"🏠 Nový inzerát\n" +
-                      $"{adPost.Title}\n" +
-                      $"📍 {adPost.Address}\n" +
-                      $"💰 {adPost.Price.ToString("N0", _numberFormat)} {adPost.Currency}\n" +
-                      $"🌐 {adPost.AdsPortalName}\n" +
-                      $"{adPost.WebUrl}";
+            return null;
 
         var endpoint = $"https://api.telegram.org/bot{_botToken}/sendMessage";
         var payload = new
         {
             chat_id = _chatId,
-            text = message,
+            text = BuildPropertyMessage(property),
+            parse_mode = "HTML",
             disable_web_page_preview = false
         };
 
+        var body = await PostWithRetryAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.TryGetProperty("result", out var result) &&
+                result.TryGetProperty("message_id", out var messageId) &&
+                messageId.TryGetInt64(out var id))
+            {
+                return id.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new RealEstateAdPostsHandlerException("Telegram sendMessage returned invalid JSON.", ex);
+        }
+
+        throw new RealEstateAdPostsHandlerException("Telegram sendMessage response did not contain result.message_id.");
+    }
+
+    public async Task UpdateRealEstatePropertyAsync(
+        RealEstatePropertyNotification property,
+        string externalMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled)
+            return;
+
+        if (!long.TryParse(externalMessageId, NumberStyles.None, CultureInfo.InvariantCulture, out var messageId))
+            throw new RealEstateAdPostsHandlerException($"Invalid Telegram message id '{externalMessageId}'.");
+
+        var endpoint = $"https://api.telegram.org/bot{_botToken}/editMessageText";
+        var payload = new
+        {
+            chat_id = _chatId,
+            message_id = messageId,
+            text = BuildPropertyMessage(property),
+            parse_mode = "HTML",
+            disable_web_page_preview = false
+        };
+
+        await PostWithRetryAsync(endpoint, payload, cancellationToken, acceptMessageNotModified: true).ConfigureAwait(false);
+    }
+
+    private string BuildPropertyMessage(RealEstatePropertyNotification property)
+    {
+        var primary = property.PrimarySource;
+        var alternatives = property.Sources
+            .Where(source => !Equals(source, primary))
+            .OrderBy(source => source.AdsPortalName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var lines = new List<string>
+        {
+            "🏠 <b>Nový inzerát</b>",
+            Html(property.Title),
+            $"📍 {Html(property.Address)}",
+            $"💰 <b>{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}</b>",
+            $"🌐 Hlavní: {Link(primary)}",
+            $"🔗 Nalezeno na {property.Sources.Count} serveru{(property.Sources.Count == 1 ? string.Empty : "ech")}."
+        };
+
+        if (alternatives.Length > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("<b>Také na:</b>");
+            lines.AddRange(alternatives.Select(source => $"• {Link(source)}"));
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static string Link(RealEstatePropertySource source) =>
+        $"<a href=\"{Html(source.WebUrl.ToString())}\">{Html(source.AdsPortalName)}</a>";
+
+    private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+
+    private async Task<string> PostWithRetryAsync(
+        string endpoint,
+        object payload,
+        CancellationToken cancellationToken,
+        bool acceptMessageNotModified = false)
+    {
         try
         {
             for (var attempt = 0; ; attempt++)
             {
                 using var response = await _httpClient.PostAsJsonAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode)
-                    return;
-
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                if (response.IsSuccessStatusCode)
+                    return body;
+
+                if (acceptMessageNotModified && response.StatusCode == HttpStatusCode.BadRequest &&
+                    body.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+                {
+                    return body;
+                }
+
                 if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt < MaxRateLimitRetries)
                 {
-                    var retryAfterSeconds = ParseRetryAfterSeconds(body);
-                    await Task.Delay(TimeSpan.FromSeconds(retryAfterSeconds), cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(ParseRetryAfterSeconds(body)), cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -87,8 +176,23 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            throw new RealEstateAdPostsHandlerException("Unable to send Telegram notification.", ex);
+            throw new RealEstateAdPostsHandlerException("Unable to communicate with Telegram.", ex);
         }
+    }
+
+    private static RealEstatePropertyNotification CreateSingleSourceProperty(RealEstateAdPost adPost)
+    {
+        var source = new RealEstatePropertySource(adPost.AdsPortalName, adPost.WebUrl);
+        return new RealEstatePropertyNotification(
+            adPost.WebUrl.GetLeftPart(UriPartial.Path),
+            adPost.Title,
+            adPost.Address,
+            adPost.Price,
+            adPost.Currency,
+            adPost.Layout,
+            adPost.FloorArea,
+            source,
+            new[] { source });
     }
 
     private static int ParseRetryAfterSeconds(string responseBody)
