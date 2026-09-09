@@ -38,30 +38,38 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         if (!IsEnabled)
             return;
 
-        var existing = _propertyStore.FindDuplicate(adPost);
-        if (existing is null)
+        try
         {
-            var newProperty = _propertyStore.CreateNew(adPost, telegramMessageId: null);
-            var messageId = await HandleNewRealEstatePropertyAsync(
-                _propertyStore.ToNotification(newProperty), cancellationToken).ConfigureAwait(false);
+            var existing = _propertyStore.FindDuplicate(adPost);
+            if (existing is null)
+            {
+                var newProperty = _propertyStore.CreateNew(adPost, telegramMessageId: null);
+                var messageId = await HandleNewRealEstatePropertyAsync(
+                    _propertyStore.ToNotification(newProperty), cancellationToken).ConfigureAwait(false);
 
-            _propertyStore.AddAndSave(newProperty with { TelegramMessageId = messageId });
-            return;
+                _propertyStore.AddAndSave(newProperty with { TelegramMessageId = messageId });
+                return;
+            }
+
+            var updated = _propertyStore.WithAdditionalSource(existing, adPost);
+            if (updated.Sources.Length == existing.Sources.Length)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(existing.TelegramMessageId))
+            {
+                await UpdateRealEstatePropertyAsync(
+                    _propertyStore.ToNotification(updated),
+                    existing.TelegramMessageId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            _propertyStore.ReplaceAndSave(existing, updated);
         }
-
-        var updated = _propertyStore.WithAdditionalSource(existing, adPost);
-        if (updated.Sources.Length == existing.Sources.Length)
-            return;
-
-        if (!string.IsNullOrWhiteSpace(existing.TelegramMessageId))
+        catch (RealEstateAdPostsHandlerException ex)
         {
-            await UpdateRealEstatePropertyAsync(
-                _propertyStore.ToNotification(updated),
-                existing.TelegramMessageId,
-                cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "Telegram delivery failed. The watcher run is intentionally failed so the listing can be retried on the next run.", ex);
         }
-
-        _propertyStore.ReplaceAndSave(existing, updated);
     }
 
     public async Task HandleNewRealEstatesAdPostsAsync(IList<RealEstateAdPost> adPosts, CancellationToken cancellationToken = default)
@@ -144,6 +152,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             .Where(source => !Equals(source, primary))
             .OrderBy(source => source.AdsPortalName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var serverWord = property.Sources.Count == 1 ? "serveru" : "serverech";
 
         var lines = new List<string>
         {
@@ -152,7 +161,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             $"📍 {Html(property.Address)}",
             $"💰 <b>{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}</b>",
             $"🌐 Hlavní: {Link(primary)}",
-            $"🔗 Nalezeno na {property.Sources.Count} serveru{(property.Sources.Count == 1 ? string.Empty : "ech")}."
+            $"🔗 Nalezeno na {property.Sources.Count} {serverWord}."
         };
 
         if (alternatives.Length > 0)
