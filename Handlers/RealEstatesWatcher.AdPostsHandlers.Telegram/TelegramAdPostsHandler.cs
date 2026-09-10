@@ -152,7 +152,6 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             .Where(source => !Equals(source, primary))
             .OrderBy(source => source.AdsPortalName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var serverWord = property.Sources.Count == 1 ? "serveru" : "serverech";
 
         var lines = new List<string>
         {
@@ -160,8 +159,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             Html(property.Title),
             $"📍 {Html(property.Address)}",
             $"💰 <b>{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}</b>",
-            $"🌐 Hlavní: {Link(primary)}",
-            $"🔗 Nalezeno na {property.Sources.Count} {serverWord}."
+            $"🌐 Hlavní: {Link(primary)}"
         };
 
         if (alternatives.Length > 0)
