@@ -99,7 +99,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             chat_id = _chatId,
             text = BuildPropertyMessage(property),
             parse_mode = "HTML",
-            disable_web_page_preview = false
+            disable_web_page_preview = property.Sources.Count > 1
         };
 
         var body = await PostWithRetryAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
@@ -139,7 +139,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             message_id = messageId,
             text = BuildPropertyMessage(property),
             parse_mode = "HTML",
-            disable_web_page_preview = false
+            disable_web_page_preview = property.Sources.Count > 1
         };
 
         await PostWithRetryAsync(endpoint, payload, cancellationToken, acceptMessageNotModified: true).ConfigureAwait(false);
