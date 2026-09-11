@@ -10,6 +10,8 @@ namespace RealEstatesWatcher.AdPostsHandlers.Telegram;
 public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatableRealEstatePropertyHandler
 {
     private const int MaxRateLimitRetries = 3;
+    private const string PhotoMessagePrefix = "photo:";
+    private const string TextMessagePrefix = "text:";
     private readonly string? _botToken;
     private readonly string? _chatId;
     private readonly NumberFormatInfo _numberFormat;
@@ -44,8 +46,10 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             if (existing is null)
             {
                 var newProperty = _propertyStore.CreateNew(adPost, telegramMessageId: null);
-                var messageId = await HandleNewRealEstatePropertyAsync(
-                    _propertyStore.ToNotification(newProperty), cancellationToken).ConfigureAwait(false);
+                var messageId = await SendNewRealEstatePropertyAsync(
+                    _propertyStore.ToNotification(newProperty),
+                    adPost.ImageUrl,
+                    cancellationToken).ConfigureAwait(false);
 
                 _propertyStore.AddAndSave(newProperty with { TelegramMessageId = messageId });
                 return;
@@ -86,15 +90,44 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         return Task.CompletedTask;
     }
 
-    public async Task<string?> HandleNewRealEstatePropertyAsync(
+    public Task<string?> HandleNewRealEstatePropertyAsync(
         RealEstatePropertyNotification property,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SendNewRealEstatePropertyAsync(property, imageUrl: null, cancellationToken);
+
+    private async Task<string?> SendNewRealEstatePropertyAsync(
+        RealEstatePropertyNotification property,
+        Uri? imageUrl,
+        CancellationToken cancellationToken)
     {
         if (!IsEnabled)
             return null;
 
-        var endpoint = $"https://api.telegram.org/bot{_botToken}/sendMessage";
-        var payload = new
+        if (imageUrl is not null)
+        {
+            try
+            {
+                var endpoint = $"https://api.telegram.org/bot{_botToken}/sendPhoto";
+                var payload = new
+                {
+                    chat_id = _chatId,
+                    photo = imageUrl.ToString(),
+                    caption = BuildPropertyMessage(property),
+                    parse_mode = "HTML"
+                };
+
+                var body = await PostWithRetryAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
+                return PhotoMessagePrefix + ParseMessageId(body, "sendPhoto");
+            }
+            catch (RealEstateAdPostsHandlerException)
+            {
+                // Some portals block Telegram's image fetcher or return an unusable image URL.
+                // Fall back to the normal text message with a pinned web preview.
+            }
+        }
+
+        var textEndpoint = $"https://api.telegram.org/bot{_botToken}/sendMessage";
+        var textPayload = new
         {
             chat_id = _chatId,
             text = BuildPropertyMessage(property),
@@ -106,23 +139,8 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             }
         };
 
-        var body = await PostWithRetryAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            if (document.RootElement.TryGetProperty("result", out var result) &&
-                result.TryGetProperty("message_id", out var messageId) &&
-                messageId.TryGetInt64(out var id))
-            {
-                return id.ToString(CultureInfo.InvariantCulture);
-            }
-        }
-        catch (JsonException ex)
-        {
-            throw new RealEstateAdPostsHandlerException("Telegram sendMessage returned invalid JSON.", ex);
-        }
-
-        throw new RealEstateAdPostsHandlerException("Telegram sendMessage response did not contain result.message_id.");
+        var textBody = await PostWithRetryAsync(textEndpoint, textPayload, cancellationToken).ConfigureAwait(false);
+        return TextMessagePrefix + ParseMessageId(textBody, "sendMessage");
     }
 
     public async Task UpdateRealEstatePropertyAsync(
@@ -133,11 +151,24 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         if (!IsEnabled)
             return;
 
-        if (!long.TryParse(externalMessageId, NumberStyles.None, CultureInfo.InvariantCulture, out var messageId))
-            throw new RealEstateAdPostsHandlerException($"Invalid Telegram message id '{externalMessageId}'.");
+        var (messageId, isPhoto) = ParseExternalMessageId(externalMessageId);
+        if (isPhoto)
+        {
+            var endpoint = $"https://api.telegram.org/bot{_botToken}/editMessageCaption";
+            var payload = new
+            {
+                chat_id = _chatId,
+                message_id = messageId,
+                caption = BuildPropertyMessage(property),
+                parse_mode = "HTML"
+            };
 
-        var endpoint = $"https://api.telegram.org/bot{_botToken}/editMessageText";
-        var payload = new
+            await PostWithRetryAsync(endpoint, payload, cancellationToken, acceptMessageNotModified: true).ConfigureAwait(false);
+            return;
+        }
+
+        var textEndpoint = $"https://api.telegram.org/bot{_botToken}/editMessageText";
+        var textPayload = new
         {
             chat_id = _chatId,
             message_id = messageId,
@@ -150,7 +181,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             }
         };
 
-        await PostWithRetryAsync(endpoint, payload, cancellationToken, acceptMessageNotModified: true).ConfigureAwait(false);
+        await PostWithRetryAsync(textEndpoint, textPayload, cancellationToken, acceptMessageNotModified: true).ConfigureAwait(false);
     }
 
     private string BuildPropertyMessage(RealEstatePropertyNotification property)
@@ -187,6 +218,41 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         $"<a href=\"{Html(source.WebUrl.ToString())}\">{Html(source.AdsPortalName)}</a>";
 
     private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+
+    private static string ParseMessageId(string responseBody, string telegramMethod)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.TryGetProperty("result", out var result) &&
+                result.TryGetProperty("message_id", out var messageId) &&
+                messageId.TryGetInt64(out var id))
+            {
+                return id.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new RealEstateAdPostsHandlerException($"Telegram {telegramMethod} returned invalid JSON.", ex);
+        }
+
+        throw new RealEstateAdPostsHandlerException($"Telegram {telegramMethod} response did not contain result.message_id.");
+    }
+
+    private static (long MessageId, bool IsPhoto) ParseExternalMessageId(string externalMessageId)
+    {
+        var isPhoto = externalMessageId.StartsWith(PhotoMessagePrefix, StringComparison.OrdinalIgnoreCase);
+        var value = isPhoto
+            ? externalMessageId[PhotoMessagePrefix.Length..]
+            : externalMessageId.StartsWith(TextMessagePrefix, StringComparison.OrdinalIgnoreCase)
+                ? externalMessageId[TextMessagePrefix.Length..]
+                : externalMessageId;
+
+        if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var messageId))
+            throw new RealEstateAdPostsHandlerException($"Invalid Telegram message id '{externalMessageId}'.");
+
+        return (messageId, isPhoto);
+    }
 
     private async Task<string> PostWithRetryAsync(
         string endpoint,
