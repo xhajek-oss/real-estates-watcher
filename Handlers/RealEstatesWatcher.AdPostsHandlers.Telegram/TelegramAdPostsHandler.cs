@@ -159,7 +159,7 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             Html(property.Title),
             $"📍 {Html(property.Address)}",
             $"💰 <b>{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}</b>",
-            $"🌐 Hlavní: {Link(primary)}"
+            $"🌐 {Link(primary)}"
         };
 
         if (alternatives.Length > 0)
