@@ -1,6 +1,9 @@
 namespace RealEstatesWatcher.Models;
 
-public sealed record RealEstatePropertySource(string AdsPortalName, Uri WebUrl);
+public sealed record RealEstatePropertySource(
+    string AdsPortalName,
+    Uri WebUrl,
+    string? PriceComment = null);
 
 public sealed record RealEstatePropertyNotification(
     string PropertyId,
