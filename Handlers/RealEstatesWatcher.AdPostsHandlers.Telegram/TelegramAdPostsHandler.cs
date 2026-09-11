@@ -160,13 +160,16 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
             .Where(source => !Equals(source, primary))
             .OrderBy(source => source.AdsPortalName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var priceText = property.Price > 0
+            ? $"{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}"
+            : "Cena na vyžádání";
 
         var lines = new List<string>
         {
             "🏠 <b>Nový inzerát</b>",
             Html(property.Title),
             $"📍 {Html(property.Address)}",
-            $"💰 <b>{property.Price.ToString("N0", _numberFormat)} {Html(property.Currency.ToString())}</b>",
+            $"💰 <b>{priceText}</b>",
             $"🌐 {Link(primary)}"
         };
 
