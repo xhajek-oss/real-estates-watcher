@@ -87,4 +87,48 @@ public class BasicParametersAdPostsFilterTests
         Assert.Equal(2, result.Count());
         Assert.Equal(2, posts.Count);
     }
+
+    [Fact]
+    public void Filter_DoesNotUseFreeFormTextAsLocationEvidence()
+    {
+        var filter = CreatePardubiceIFilter();
+        var chvaletice = CreateLocationPost(
+            title: "Prodej, domy/rodinný, 97 m2, V Telčicích 6, 53312 Chvaletice",
+            address: "Pardubice 533 12",
+            text: "Rodinný dům se zahradou a zámek v okolí.");
+
+        Assert.Empty(filter.Filter([chvaletice]));
+    }
+
+    [Fact]
+    public void Filter_KeepsPardubiceIAliasFromAddressOrTitle()
+    {
+        var filter = CreatePardubiceIFilter();
+        var pardubice = CreateLocationPost(
+            title: "Prodej bytu 2+kk, Pardubice",
+            address: "Jiráskova, Pardubice - Zelené Předměstí",
+            text: "Bez dalších lokalit v popisu.");
+
+        Assert.Single(filter.Filter([pardubice]));
+    }
+
+    private static BasicParametersAdPostsFilter CreatePardubiceIFilter() =>
+        new(new BasicParametersAdPostsFilterSettings
+        {
+            City = "Pardubice",
+            LocationAny = "Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí"
+        });
+
+    private static RealEstateAdPost CreateLocationPost(string title, string address, string text) => new()
+    {
+        AdsPortalName = "Bazoš.cz",
+        Title = title,
+        Text = text,
+        Price = 5_980_000m,
+        Address = address,
+        WebUrl = new Uri("https://reality.bazos.cz/inzerat/123/test.php"),
+        Currency = Currency.CZK,
+        Layout = Layout.NotSpecified,
+        FloorArea = 97m
+    };
 }
