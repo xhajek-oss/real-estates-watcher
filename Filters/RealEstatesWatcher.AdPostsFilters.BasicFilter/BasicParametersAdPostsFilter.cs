@@ -34,7 +34,9 @@ public class BasicParametersAdPostsFilter(BasicParametersAdPostsFilterSettings s
                 post.FloorArea > _settings.MaxFloorArea)
                 return false;
 
-            var searchableLocation = NormalizeLocation($"{post.Address} {post.Title} {post.Text}");
+            // Location filters must rely on structured-ish location fields only. Free-form ad text
+            // can mention unrelated places or words such as "zámek" and cause false positives.
+            var searchableLocation = NormalizeLocation($"{post.Address} {post.Title}");
 
             if (!string.IsNullOrWhiteSpace(_settings.City) &&
                 !searchableLocation.Contains(NormalizeLocation(_settings.City), StringComparison.Ordinal))
