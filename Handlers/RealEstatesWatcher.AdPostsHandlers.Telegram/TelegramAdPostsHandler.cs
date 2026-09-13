@@ -7,7 +7,7 @@ using RealEstatesWatcher.Models;
 
 namespace RealEstatesWatcher.AdPostsHandlers.Telegram;
 
-public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatableRealEstatePropertyHandler
+public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatableRealEstatePropertyHandler, IRealEstateAdPostsSnapshotHandler
 {
     private const int MaxRateLimitRetries = 3;
     private const string PhotoMessagePrefix = "photo:";
@@ -90,6 +90,40 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         return Task.CompletedTask;
     }
 
+    public async Task HandleCurrentRealEstateAdPostsAsync(
+        IList<RealEstateAdPost> adPosts,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsEnabled)
+            return;
+
+        try
+        {
+            foreach (var adPost in adPosts)
+            {
+                var observation = _propertyStore.ObservePrice(adPost);
+                if (observation is null)
+                    continue;
+
+                if (observation.IsPriceDrop)
+                {
+                    await SendPriceDropNotificationAsync(
+                        adPost,
+                        observation.PreviousPrice,
+                        observation.CurrentPrice,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+                _propertyStore.ReplaceAndSave(observation.ExistingProperty, observation.UpdatedProperty);
+            }
+        }
+        catch (RealEstateAdPostsHandlerException ex)
+        {
+            throw new InvalidOperationException(
+                "Telegram price-drop delivery failed. The watcher run is intentionally failed so the price change can be retried on the next run.", ex);
+        }
+    }
+
     public Task<string?> HandleNewRealEstatePropertyAsync(
         RealEstatePropertyNotification property,
         CancellationToken cancellationToken = default) =>
@@ -141,6 +175,28 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
 
         var textBody = await PostWithRetryAsync(textEndpoint, textPayload, cancellationToken).ConfigureAwait(false);
         return TextMessagePrefix + ParseMessageId(textBody, "sendMessage");
+    }
+
+    private async Task SendPriceDropNotificationAsync(
+        RealEstateAdPost post,
+        decimal previousPrice,
+        decimal currentPrice,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"https://api.telegram.org/bot{_botToken}/sendMessage";
+        var payload = new
+        {
+            chat_id = _chatId,
+            text = BuildPriceDropMessage(post, previousPrice, currentPrice),
+            parse_mode = "HTML",
+            link_preview_options = new
+            {
+                is_disabled = false,
+                url = post.WebUrl.ToString()
+            }
+        };
+
+        await PostWithRetryAsync(endpoint, payload, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UpdateRealEstatePropertyAsync(
@@ -212,6 +268,24 @@ public sealed class TelegramAdPostsHandler : IRealEstateAdPostsHandler, IUpdatab
         }
 
         return string.Join('\n', lines);
+    }
+
+    private string BuildPriceDropMessage(RealEstateAdPost post, decimal previousPrice, decimal currentPrice)
+    {
+        var discount = previousPrice - currentPrice;
+        var discountPercent = previousPrice > 0 ? discount / previousPrice * 100m : decimal.Zero;
+        var currency = Html(post.Currency.ToString());
+
+        return string.Join('\n', new[]
+        {
+            "🔻 <b>Snížení ceny</b>",
+            Html(post.Title),
+            $"📍 {Html(post.Address)}",
+            $"💰 <b>{currentPrice.ToString("N0", _numberFormat)} {currency}</b>",
+            $"Původně: <s>{previousPrice.ToString("N0", _numberFormat)} {currency}</s>",
+            $"Sleva: <b>−{discount.ToString("N0", _numberFormat)} {currency} (−{discountPercent.ToString("0.#", _numberFormat)} %)</b>",
+            $"🌐 <a href=\"{Html(post.WebUrl.ToString())}\">{Html(post.AdsPortalName)}</a>"
+        });
     }
 
     private static string Link(RealEstatePropertySource source) =>

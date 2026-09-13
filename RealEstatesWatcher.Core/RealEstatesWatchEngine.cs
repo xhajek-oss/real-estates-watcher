@@ -130,6 +130,8 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                         break;
                 }
 
+                await NotifySnapshotHandlers(posts).ConfigureAwait(false);
+
                 if (newPosts.Count > 0)
                     SavePersistentState();
 
@@ -217,7 +219,6 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
     private double CalculateIntervalForNextCheckTime(out DateTime nextCheckTime)
     {
         var now = DateTime.UtcNow;
-
         if (_settings.StartCheckAtSpecificTime is null)
         {
             nextCheckTime = now.AddMinutes(_settings.CheckIntervalMinutes);
@@ -258,6 +259,8 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
                     await NotifyHandlers(newPosts).ConfigureAwait(false);
                     break;
             }
+
+            await NotifySnapshotHandlers(allPosts).ConfigureAwait(false);
 
             if (newPosts.Count > 0)
                 SavePersistentState();
@@ -305,6 +308,14 @@ public class RealEstatesWatchEngine(WatchEngineSettings settings,
             {
                 logger?.LogError(reaphEx, "Error notifying Ad posts Handler '{HandlerName}': {ExceptionMessage}", handler.GetType().FullName, reaphEx.Message);
             }
+        }
+    }
+
+    private async Task NotifySnapshotHandlers(IList<RealEstateAdPost> adPosts)
+    {
+        foreach (var handler in _handlers.OfType<IRealEstateAdPostsSnapshotHandler>())
+        {
+            await handler.HandleCurrentRealEstateAdPostsAsync(adPosts).ConfigureAwait(false);
         }
     }
 
