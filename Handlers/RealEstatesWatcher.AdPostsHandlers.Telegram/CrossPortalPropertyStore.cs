@@ -67,6 +67,50 @@ internal sealed class CrossPortalPropertyStore
     public StoredProperty WithAdditionalSource(StoredProperty property, RealEstateAdPost post) =>
         AddSource(property, post);
 
+    public PriceObservation? ObservePrice(RealEstateAdPost post)
+    {
+        if (post.Price <= 0)
+            return null;
+
+        var listingKey = GetListingKey(post);
+        var property = _properties.FirstOrDefault(candidate => candidate.Sources.Any(source =>
+            string.Equals(source.ListingKey, listingKey, StringComparison.OrdinalIgnoreCase)));
+        if (property is null)
+            return null;
+
+        var source = property.Sources.First(candidate =>
+            string.Equals(candidate.ListingKey, listingKey, StringComparison.OrdinalIgnoreCase));
+        if (source.LastPrice == post.Price)
+            return null;
+
+        var previousPrice = source.LastPrice;
+        var previousBestPrice = property.Sources
+            .Select(candidate => candidate.LastPrice)
+            .Where(price => price > 0)
+            .DefaultIfEmpty(decimal.Zero)
+            .Min();
+
+        var updatedSource = source with { LastPrice = post.Price };
+        var updatedSources = property.Sources
+            .Select(candidate => string.Equals(candidate.ListingKey, listingKey, StringComparison.OrdinalIgnoreCase)
+                ? updatedSource
+                : candidate)
+            .ToArray();
+        var isPrimary = string.Equals(property.PrimarySource.ListingKey, listingKey, StringComparison.OrdinalIgnoreCase);
+        var updated = property with
+        {
+            Price = isPrimary ? post.Price : property.Price,
+            PrimarySource = isPrimary ? updatedSource : property.PrimarySource,
+            Sources = updatedSources
+        };
+
+        var isPriceDrop = previousPrice > 0 &&
+                          post.Price < previousPrice &&
+                          (previousBestPrice <= 0 || post.Price < previousBestPrice);
+
+        return new PriceObservation(property, updated, previousPrice, post.Price, isPriceDrop);
+    }
+
     public void AddAndSave(StoredProperty property)
     {
         _properties.Add(property);
@@ -147,7 +191,7 @@ internal sealed class CrossPortalPropertyStore
     }
 
     private static StoredSource CreateSource(RealEstateAdPost post) =>
-        new(GetListingKey(post), post.AdsPortalName, post.WebUrl.ToString());
+        new(GetListingKey(post), post.AdsPortalName, post.WebUrl.ToString(), post.Price);
 
     private static int Score(StoredProperty existing, RealEstateAdPost candidate)
     {
@@ -303,7 +347,7 @@ internal sealed class CrossPortalPropertyStore
         return string.Join(' ', builder.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    internal sealed record StoredSource(string ListingKey, string AdsPortalName, string WebUrl);
+    internal sealed record StoredSource(string ListingKey, string AdsPortalName, string WebUrl, decimal LastPrice = decimal.Zero);
 
     internal sealed record StoredProperty(
         string PropertyId,
@@ -316,6 +360,13 @@ internal sealed class CrossPortalPropertyStore
         StoredSource PrimarySource,
         StoredSource[] Sources,
         string? TelegramMessageId);
+
+    internal sealed record PriceObservation(
+        StoredProperty ExistingProperty,
+        StoredProperty UpdatedProperty,
+        decimal PreviousPrice,
+        decimal CurrentPrice,
+        bool IsPriceDrop);
 
     private sealed record PropertyStoreState(int Version, StoredProperty[]? Properties);
 }
