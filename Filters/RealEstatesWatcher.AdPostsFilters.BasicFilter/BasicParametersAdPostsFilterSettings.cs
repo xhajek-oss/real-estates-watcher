@@ -29,4 +29,7 @@ public record BasicParametersAdPostsFilterSettings
 
     [SettingsKey("location_any")]
     public string? LocationAny { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_LOCATION_ANY");
+
+    [SettingsKey("postal_codes")]
+    public string? PostalCodes { get; init; } = Environment.GetEnvironmentVariable("REW_FILTER_POSTAL_CODES");
 }
