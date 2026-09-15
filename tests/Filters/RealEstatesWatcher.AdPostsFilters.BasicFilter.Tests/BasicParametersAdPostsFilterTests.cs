@@ -101,12 +101,36 @@ public class BasicParametersAdPostsFilterTests
     }
 
     [Fact]
+    public void Filter_DoesNotTreatIdSuffixAsPardubiceIAlias()
+    {
+        var filter = CreatePardubiceIFilter();
+        var sezemice = CreateLocationPost(
+            title: "Prodej, domy/rodinný, 125 m2, 53304 Sezemice, Pardubice [ID 123]",
+            address: "Pardubice 533 04",
+            text: "Rodinný dům v Sezemicích.");
+
+        Assert.Empty(filter.Filter([sezemice]));
+    }
+
+    [Fact]
+    public void Filter_RejectsPostalCodeOutsideConfiguredArea()
+    {
+        var filter = CreatePardubiceIFilter();
+        var sezemice = CreateLocationPost(
+            title: "Prodej domu, Pardubice I, 53304 Sezemice",
+            address: "Pardubice I 533 04",
+            text: "Test conflicting location data.");
+
+        Assert.Empty(filter.Filter([sezemice]));
+    }
+
+    [Fact]
     public void Filter_KeepsPardubiceIAliasFromAddressOrTitle()
     {
         var filter = CreatePardubiceIFilter();
         var pardubice = CreateLocationPost(
             title: "Prodej bytu 2+kk, Pardubice",
-            address: "Jiráskova, Pardubice - Zelené Předměstí",
+            address: "Jiráskova, Pardubice - Zelené Předměstí, 530 02",
             text: "Bez dalších lokalit v popisu.");
 
         Assert.Single(filter.Filter([pardubice]));
@@ -116,7 +140,8 @@ public class BasicParametersAdPostsFilterTests
         new(new BasicParametersAdPostsFilterSettings
         {
             City = "Pardubice",
-            LocationAny = "Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí"
+            LocationAny = "Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí",
+            PostalCodes = "53002,53003,53009"
         });
 
     private static RealEstateAdPost CreateLocationPost(string title, string address, string text) => new()
