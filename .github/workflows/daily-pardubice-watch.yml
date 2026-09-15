@@ -20,6 +20,7 @@ jobs:
       REW_FILTER_CITY: Pardubice
       REW_FILTER_STREET: ''
       REW_FILTER_LOCATION_ANY: 'Pardubice I,Pardubice-Staré Město,Staré Město,Zámek,Bílé Předměstí,Zelené Předměstí'
+      REW_FILTER_POSTAL_CODES: '53002,53003,53009'
 
     steps:
       - name: Checkout
